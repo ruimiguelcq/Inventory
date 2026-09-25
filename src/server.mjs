@@ -25,7 +25,20 @@ import { readImportForm, previewImport, applyImport, ImportError } from './impor
 import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
-import { stockPage, historyPage } from './views.mjs';
+import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
+import {
+  BackupError,
+  backupDirectoryFor,
+  createBackup,
+  findBackup,
+  installStagedDatabase,
+  listBackups,
+  replaceDatabaseFile,
+  stageBackup,
+  summarizeDatabase,
+  DEFAULT_BACKUP_INTERVAL_MS,
+  DEFAULT_BACKUP_RETENTION,
+} from './backups.mjs';
 
 const scrypt = promisify(scryptCallback);
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
@@ -146,6 +159,17 @@ function authenticatedPage(response, content) {
   sendHtml(response, content);
 }
 
+function backupError(response, session, backupDirectory, message, status) {
+  return sendHtml(response, backupsPage({ ...session, backups: listBackups(backupDirectory), error: message }), status);
+}
+
+function requireVerifiedBackup(directory, file) {
+  const backup = findBackup(directory, file);
+  if (!backup) throw new BackupError('No encontramos una copia de seguridad con ese nombre.', 404);
+  if (!backup.valid) throw new BackupError('La copia seleccionada no supera la verificación.', 422);
+  return backup;
+}
+
 function validateCsrf(form, session) {
   return matchesToken(form.get('csrfToken') ?? '', session.csrfToken);
 }
@@ -177,10 +201,26 @@ function inventoryFilters(params) {
   };
 }
 
-export function createInventoryServer({ databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite' } = {}) {
-  const database = openDatabase(databasePath);
+export function createInventoryServer({
+  databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite',
+  backupDirectory = backupDirectoryFor(databasePath),
+  backupIntervalMs = Number(process.env.BACKUP_INTERVAL_MS) || DEFAULT_BACKUP_INTERVAL_MS,
+  backupRetention = Number(process.env.BACKUP_RETENTION) || DEFAULT_BACKUP_RETENTION,
+  automaticBackups = true,
+} = {}) {
+  let database = openDatabase(databasePath);
   const sessions = new Map();
   const initialSetupToken = randomBytes(32).toString('base64url');
+  let lastRestore = null;
+
+  function runAutomaticBackup() {
+    try {
+      createBackup(database, backupDirectory, { retention: backupRetention });
+    } catch (error) {
+      // A failed snapshot must never take the inventory down.
+      console.error('No se pudo crear la copia de seguridad automática:', error.message);
+    }
+  }
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -327,6 +367,68 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
             throw error;
           }
           return redirect(response, '/users?saved=1');
+        }
+      }
+
+      if (url.pathname.startsWith('/backups')) {
+        if (session.role !== 'admin') return sendHtml(response, forbiddenPage(session), 403);
+        const storedSession = sessions.get(session.id);
+        try {
+          if (request.method === 'GET' && url.pathname === '/backups') {
+            const message = url.searchParams.get('restored') === '1'
+              ? 'Restauración completada y verificada.'
+              : url.searchParams.get('created') === '1' ? 'Copia creada.' : '';
+            return sendHtml(response, backupsPage({ ...session, backups: listBackups(backupDirectory), message, lastRestore }));
+          }
+          if (request.method === 'POST' && url.pathname === '/backups') {
+            const form = await readForm(request);
+            if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+            createBackup(database, backupDirectory, { retention: backupRetention });
+            return redirect(response, '/backups?created=1');
+          }
+          if (url.pathname === '/backups/restore' && request.method === 'GET') {
+            const backup = requireVerifiedBackup(backupDirectory, url.searchParams.get('file'));
+            const confirmationToken = randomBytes(32).toString('base64url');
+            storedSession.backupRestore = { file: backup.file, confirmationToken };
+            return sendHtml(response, restoreBackupPage({ ...session, backup, confirmationToken }));
+          }
+          if (url.pathname === '/backups/restore' && request.method === 'POST') {
+            const form = await readForm(request);
+            if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+            const backup = requireVerifiedBackup(backupDirectory, form.get('file'));
+            const pending = storedSession.backupRestore;
+            if (!pending || pending.file !== backup.file || !matchesToken(form.get('confirmationToken') ?? '', pending.confirmationToken)) {
+              throw new BackupError('La restauración caducó. Abre de nuevo la copia y confirma la operación.', 409);
+            }
+            delete storedSession.backupRestore;
+            // Stage the chosen snapshot first: creating the safety copy prunes older files.
+            const staged = stageBackup(databasePath, backup.path);
+            const safetyBackup = createBackup(database, backupDirectory, { retention: backupRetention });
+            database.close();
+            try {
+              installStagedDatabase(databasePath, staged);
+              database = openDatabase(databasePath);
+              const summary = summarizeDatabase(database);
+              if (summary.integrity !== 'ok' || summary.products !== backup.products
+                || summary.movements !== backup.movements || summary.users !== backup.users) {
+                throw new BackupError('La restauración no coincide con la copia verificada.', 500);
+              }
+              lastRestore = { backup: backup.file, safety: safetyBackup.file, restoredAt: new Date().toISOString(), ...summary };
+            } catch (error) {
+              // Any failure after the swap rolls back to the snapshot taken moments ago.
+              if (database.isOpen) database.close();
+              replaceDatabaseFile(databasePath, safetyBackup.path);
+              database = openDatabase(databasePath);
+              if (error instanceof BackupError) throw error;
+              throw new BackupError('No se pudo completar la restauración; se recuperó el estado anterior.', 500);
+            }
+            return redirect(response, '/backups?restored=1');
+          }
+          return sendHtml(response, notFoundPage(session), 404);
+        } catch (error) {
+          if (!(error instanceof BackupError)) throw error;
+          if (!database.isOpen) database = openDatabase(databasePath);
+          return backupError(response, session, backupDirectory, error.message, error.status);
         }
       }
 
@@ -482,7 +584,17 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
     }
   });
 
-  server.on('close', () => database.close());
+  let backupTimer = null;
+  if (automaticBackups) {
+    runAutomaticBackup();
+    backupTimer = setInterval(runAutomaticBackup, backupIntervalMs);
+    backupTimer.unref?.();
+  }
+
+  server.on('close', () => {
+    if (backupTimer) clearInterval(backupTimer);
+    if (database.isOpen) database.close();
+  });
   return server;
 }
 

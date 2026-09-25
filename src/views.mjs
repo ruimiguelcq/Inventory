@@ -23,6 +23,7 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
       <nav aria-label="Navegación principal">
         <a class="nav-link ${active === 'inventory' ? 'is-active' : ''}" href="/inventory">Inventario</a>
         ${role === 'admin' ? `<a class="nav-link ${active === 'users' ? 'is-active' : ''}" href="/users">Cuentas y permisos</a>` : ''}
+        ${role === 'admin' ? `<a class="nav-link ${active === 'backups' ? 'is-active' : ''}" href="/backups">Copias de seguridad</a>` : ''}
       </nav>
       <div class="account-area">
         <span class="account-name">${escapeHtml(username)}</span>
@@ -455,4 +456,80 @@ export function importPage({ review, confirmationToken, error = '', ...session }
         <div class="form-actions"><a class="button button-quiet" href="/inventory">Volver al inventario</a>
           <button class="button button-primary" type="submit">Revisar importación</button></div>
       </form>`}`, session);
+}
+
+function formatBytes(size) {
+  if (!Number.isFinite(size)) return '—';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatUtc(value) {
+  return String(value).replace('T', ' ').replace('Z', ' UTC');
+}
+
+function backupCounts(backup) {
+  const articles = backup.products ?? 0;
+  const movements = backup.movements ?? 0;
+  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'}`;
+}
+
+export function backupsPage({ backups, lastRestore = null, error = '', message = '', ...session }) {
+  const rows = backups.map((backup) => `<tr>
+    <td class="part-number">${escapeHtml(backup.file)}<br>
+      <span class="muted">${backup.valid ? backupCounts(backup) : 'Copia dañada'}</span></td>
+    <td><time datetime="${escapeHtml(backup.createdAt)}">${escapeHtml(formatUtc(backup.createdAt))}</time></td>
+    <td class="quantity-cell">${escapeHtml(formatBytes(backup.size))}</td>
+    <td>${backup.valid ? '<span class="presentation-tag">Correcta</span>' : 'No verificable'}</td>
+    <td>${backup.valid
+      ? `<a href="/backups/restore?file=${encodeURIComponent(backup.file)}">Restaurar</a>`
+      : '<span class="muted">No se puede restaurar</span>'}</td>
+  </tr>`).join('');
+
+  const verification = lastRestore ? `
+    <section class="inventory-panel" aria-label="Verificación de la restauración">
+      <h2>Restauración completada y verificada</h2>
+      <p>Copia restaurada: <strong>${escapeHtml(lastRestore.backup)}</strong>. Integridad correcta.</p>
+      <p>Contenido restaurado: ${backupCounts(lastRestore)}.</p>
+      <p>Copia de seguridad del estado anterior: <strong>${escapeHtml(lastRestore.safety)}</strong>.</p>
+    </section>` : '';
+
+  return page('Copias de seguridad', `
+    <div class="page-heading">
+      <div><p class="eyebrow">Administración</p><h1>Copias de seguridad</h1>
+        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve artículos, existencias e historial.</p></div>
+      <form method="post" action="/backups">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <button class="button button-primary" type="submit">Crear copia ahora</button>
+      </form>
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    ${verification}
+    <section class="inventory-panel" aria-label="Copias de seguridad disponibles">
+      <h2>Copias disponibles</h2>
+      ${backups.length ? `<div class="table-scroll"><table><thead><tr>
+        <th scope="col">Copia</th><th scope="col">Creada (UTC)</th><th scope="col" class="align-right">Tamaño</th>
+        <th scope="col">Integridad</th><th scope="col"><span class="visually-hidden">Acciones</span></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay copias de seguridad.</p></div>'}
+    </section>`, { ...session, active: 'backups', message });
+}
+
+export function restoreBackupPage({ backup, confirmationToken, ...session }) {
+  return page('Restaurar copia', `
+    <div class="breadcrumb"><a href="/backups">Copias de seguridad</a><span aria-hidden="true">/</span><span>Restaurar</span></div>
+    <div class="page-heading"><div><p class="eyebrow">Administración</p><h1>Restaurar copia</h1>
+      <p>Se reemplazarán los datos actuales. Antes de restaurar se guarda una copia de seguridad del estado anterior.</p></div></div>
+    <section class="inventory-panel" aria-label="Detalles de la copia">
+      <h2>${escapeHtml(backup.file)}</h2>
+      <p>Creada: <time datetime="${escapeHtml(backup.createdAt)}">${escapeHtml(formatUtc(backup.createdAt))}</time> · Tamaño: ${escapeHtml(formatBytes(backup.size))}</p>
+      <p>Contenido verificado: ${backupCounts(backup)} · Integridad correcta.</p>
+    </section>
+    <form method="post" action="/backups/restore" class="form-actions">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      <input type="hidden" name="file" value="${escapeHtml(backup.file)}">
+      <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
+      <a class="button button-quiet" href="/backups">Cancelar</a>
+      <button class="button button-primary" type="submit">Restaurar copia</button>
+    </form>`, { ...session, active: 'backups' });
 }

@@ -85,6 +85,20 @@ El archivo `inventario.xlsx` contiene una hoja con P/N, Descripción, Presentaci
 
 Puedes cargar el archivo en **Importar Excel** para revisar los cambios antes de confirmarlos. Para recuperar las cantidades exportadas, activa **Importar existencias** y elige **Establecer en**; **Ajustar por** sumaría las cantidades al stock actual. Se aplican los límites de importación de 2 MB y 1000 filas por archivo; para inventarios mayores, prepara lotes dentro de esos límites conservando los encabezados. Un inventario vacío genera solo los encabezados.
 
+## Copias de seguridad
+
+La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:
+
+- Al iniciar el servidor y cada 24 horas.
+- Se guardan como archivos SQLite en `data/backups/` (o en `BACKUP_DIRECTORY`).
+- Se conservan las 10 más recientes; las anteriores se eliminan automáticamente (`BACKUP_RETENTION`).
+
+Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos y movimientos e integridad verificada.
+
+**Restaurar** una copia reemplaza artículos, existencias e historial por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que su número de artículos y movimientos coincide con la copia elegida. Una copia dañada aparece como **No verificable** y no puede restaurarse.
+
+Parámetros opcionales: `BACKUP_DIRECTORY`, `BACKUP_INTERVAL_MS` y `BACKUP_RETENTION`.
+
 ## Probar
 
 ```powershell
