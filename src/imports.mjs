@@ -43,13 +43,7 @@ function descriptiveProduct(product) {
     brand: product.brand, location: product.location, minimumStock: product.minimum_stock };
 }
 
-export async function previewImport(database, form) {
-  const descriptions = form.get('descriptions') === 'on';
-  const stock = form.get('stock') === 'on';
-  const operation = form.get('operation');
-  if (!descriptions && !stock) throw new ImportError('Elige datos descriptivos y/o existencias.');
-  if (stock && !['adjust', 'set'].includes(operation)) throw new ImportError('Elige explícitamente Ajustar por o Establecer en.');
-  const file = form.get('file');
+async function readSpreadsheet(file) {
   if (!file || typeof file.arrayBuffer !== 'function' || !/\.xlsx$/i.test(file.name) || !file.size) throw new ImportError('Selecciona un archivo Excel .xlsx válido.');
   if (file.size > MAX_UPLOAD) throw new ImportError('El archivo supera el límite de 2 MB.');
   const workbook = new ExcelJS.Workbook();
@@ -66,6 +60,22 @@ export async function previewImport(database, form) {
     if (mapping.has(field)) throw new ImportError(`Columna repetida: ${cellText(cell)}.`);
     mapping.set(field, index);
   });
+  const mappedColumns = new Set(mapping.values());
+  sheet.eachRow((row, number) => {
+    row.eachCell((cell, index) => {
+      if (!mappedColumns.has(index)) throw new ImportError(`La fila ${number} contiene datos sin encabezado de columna.`);
+    });
+  });
+  return { sheet, mapping };
+}
+
+export async function previewImport(database, form) {
+  const descriptions = form.get('descriptions') === 'on';
+  const stock = form.get('stock') === 'on';
+  const operation = form.get('operation');
+  if (!descriptions && !stock) throw new ImportError('Elige datos descriptivos y/o existencias.');
+  if (stock && !['adjust', 'set'].includes(operation)) throw new ImportError('Elige explícitamente Ajustar por o Establecer en.');
+  const { sheet, mapping } = await readSpreadsheet(form.get('file'));
   const required = ['partNumber', ...(descriptions ? ['description', 'presentation'] : []), ...(stock ? ['quantity'] : [])];
   if (required.some((field) => !mapping.has(field))) throw new ImportError('Faltan columnas obligatorias: P/N, Descripción y Presentación para datos descriptivos; Cantidad para existencias.');
   const rows = [];
@@ -73,9 +83,6 @@ export async function previewImport(database, form) {
   for (let number = 2; number <= sheet.rowCount; number++) {
     const excelRow = sheet.getRow(number);
     if (!excelRow.hasValues) continue;
-    excelRow.eachCell((cell, index) => {
-      if (![...mapping.values()].includes(index)) throw new ImportError(`La fila ${number} contiene datos sin encabezado de columna.`);
-    });
     const row = { number, errors: [], partNumber: '', previous: null, product: null, change: null };
     try {
       row.partNumber = cellText(excelRow.getCell(mapping.get('partNumber')));

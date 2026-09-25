@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
+import { request } from 'node:http';
 import { createInventoryServer } from '../src/server.mjs';
 
 async function app(t) {
@@ -40,7 +41,7 @@ async function app(t) {
     cookie = login.headers.get('set-cookie').split(';')[0];
     return token(await (await get('/inventory')).text());
   };
-  return { get, post, token, csrfToken, upload, signIn, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
+  return { url, get, post, token, csrfToken, upload, signIn, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
 }
 
 test('invalid rows and duplicates block the whole batch, including data without a column heading', async (t) => {
@@ -210,4 +211,42 @@ test('gestión imports are attributed and consulta cannot preview or confirm eve
   assert.equal((await a.post('/imports/confirm', pendingFields)).status, 403);
   assert.equal((await a.upload(rows)).status, 403);
   assert.doesNotMatch(await (await a.get('/inventory')).text(), /Importar Excel/);
+});
+
+test('an invalid replacement preserves the last valid preview', async (t) => {
+  const a = await app(t);
+  const preview = await a.upload([['P/N', 'Descripción', 'Presentación'], ['VALID', 'Válido', 'KIT']], { descriptions: 'on' });
+  const fields = { csrfToken: a.csrfToken, confirmationToken: a.token(await preview.text(), 'confirmationToken') };
+  const invalid = await a.upload([['P/N', 'Descripción', 'Presentación'], ['INVALID', '', 'KIT']], { descriptions: 'on' });
+  assert.doesNotMatch(await invalid.text(), /Confirmar importación/);
+  assert.equal((await a.post('/imports/confirm', fields)).status, 303);
+  const inventory = await (await a.get('/inventory')).text();
+  assert.match(inventory, /VALID/);
+  assert.doesNotMatch(inventory, /INVALID/);
+});
+
+test('cancellation invalidates an upload whose request body is still arriving', async (t) => {
+  const a = await app(t);
+  const workbook = new ExcelJS.Workbook();
+  workbook.addWorksheet('Inventario').addRows([['P/N', 'Descripción', 'Presentación'], ['LATE', 'Tardío', 'KIT']]);
+  const form = new FormData();
+  form.set('csrfToken', a.csrfToken);
+  form.set('descriptions', 'on');
+  form.set('file', new Blob([await workbook.xlsx.writeBuffer()]), 'inventario.xlsx');
+  const encoded = new Response(form);
+  const body = Buffer.from(await encoded.arrayBuffer());
+  const pending = request(`${a.url}/imports`, {
+    method: 'POST', headers: { cookie: a.cookie, Expect: '100-continue',
+      'content-type': encoded.headers.get('content-type'), 'content-length': body.length },
+  });
+  t.after(() => pending.destroy());
+  const result = new Promise((resolve, reject) => {
+    pending.on('response', (response) => { response.resume(); resolve(response.statusCode); });
+    pending.on('error', reject);
+  });
+  await new Promise((resolve) => { pending.once('continue', resolve); pending.flushHeaders(); });
+  assert.equal((await a.post('/imports/cancel', { csrfToken: a.csrfToken })).status, 303);
+  pending.end(body);
+  assert.equal(await result, 409);
+  assert.doesNotMatch(await (await a.get('/inventory')).text(), /LATE/);
 });

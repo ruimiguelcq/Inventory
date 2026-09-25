@@ -1,10 +1,7 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
+import { PRESENTATIONS as presentationValues } from './products.mjs';
 
-const PRESENTATIONS = [
-  ['SET', 'SET'],
-  ['KIT', 'KIT'],
-  ['unidad', 'unidad'],
-];
+const PRESENTATIONS = presentationValues.map((value) => [value, value]);
 
 export function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({

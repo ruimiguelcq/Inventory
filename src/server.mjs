@@ -311,17 +311,25 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
           return sendHtml(response, importPage(session));
         }
         if (request.method === 'POST') {
+          const initialGeneration = storedSession.importGeneration ?? 0;
           try {
             const form = url.pathname === '/imports' ? await readImportForm(request) : await readForm(request);
             if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
             if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
             if (url.pathname === '/imports/cancel') {
+              storedSession.importGeneration = (storedSession.importGeneration ?? 0) + 1;
               delete storedSession.importReview;
               return redirect(response, '/inventory');
             }
             if (url.pathname === '/imports') {
-              delete storedSession.importReview;
+              if ((storedSession.importGeneration ?? 0) !== initialGeneration) throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
+              const generation = initialGeneration + 1;
+              storedSession.importGeneration = generation;
               const review = await previewImport(database, form);
+              if (storedSession.importGeneration !== generation || sessions.get(session.id) !== storedSession) {
+                throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
+              }
+              if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
               const confirmationToken = randomBytes(32).toString('base64url');
               if (!review.rows.some((row) => row.errors.length)) storedSession.importReview = { review, confirmationToken };
               return sendHtml(response, importPage({ ...session, review, confirmationToken }));
