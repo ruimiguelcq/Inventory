@@ -92,6 +92,7 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /Marina Parts/);
   assert.match(savedHtml, /Estante B · caja 4/);
   assert.match(savedHtml, /<td class="quantity-cell">2<\/td>/);
+  assert.doesNotMatch(savedHtml, /<th[^>]*>Disponible<\/th>/);
 });
 
 test('a duplicate P/N is rejected without changing the saved repuesto', async () => {

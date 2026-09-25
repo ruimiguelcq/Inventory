@@ -25,7 +25,6 @@ export function openDatabase(databasePath) {
       brand TEXT,
       location TEXT,
       minimum_stock INTEGER CHECK (minimum_stock IS NULL OR minimum_stock >= 0),
-      available_quantity INTEGER NOT NULL DEFAULT 0 CHECK (available_quantity >= 0),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -34,7 +33,7 @@ export function openDatabase(databasePath) {
 }
 
 export function hasAdministrator(database) {
-  return database.prepare('SELECT 1 FROM users LIMIT 1').get() !== undefined;
+  return database.prepare("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").get() !== undefined;
 }
 
 export function createAdministrator(database, { username, passwordSalt, passwordHash }) {
@@ -71,7 +70,7 @@ export function findProduct(database, id) {
 
 export function listProducts(database) {
   return database.prepare(`
-    SELECT id, part_number, description, presentation, brand, location, minimum_stock, available_quantity
+    SELECT id, part_number, description, presentation, brand, location, minimum_stock
     FROM products
     ORDER BY part_number COLLATE NOCASE
   `).all();

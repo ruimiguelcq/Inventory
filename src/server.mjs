@@ -212,7 +212,6 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         }
         const passwordSalt = randomBytes(16).toString('hex');
         const passwordHash = (await scrypt(password, passwordSalt, 64)).toString('hex');
-        if (hasAdministrator(database)) return sendHtml(response, loginPage({ error: 'El acceso inicial ya se configuró. Inicia sesión.' }), 409);
         try {
           createAdministrator(database, { username, passwordSalt, passwordHash });
         } catch (error) {
