@@ -50,6 +50,9 @@ export function openDatabase(databasePath) {
     );
     CREATE INDEX IF NOT EXISTS stock_movements_product ON stock_movements(product_id, id);
   `);
+  if (!database.prepare('PRAGMA table_info(stock_movements)').all().some((column) => column.name === 'source')) {
+    database.exec("ALTER TABLE stock_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import'))");
+  }
   return database;
 }
 

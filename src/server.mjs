@@ -18,7 +18,9 @@ import {
   updateProduct,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, renderPresentations, setupPage } from './views.mjs';
+import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { validateProduct } from './products.mjs';
+import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage } from './views.mjs';
@@ -26,7 +28,6 @@ import { stockPage, historyPage } from './views.mjs';
 const scrypt = promisify(scryptCallback);
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 const PASSWORD_MIN_LENGTH = 12;
-const presentationValues = new Set(renderPresentations().map(([value]) => value));
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const stylesheet = readFile(join(sourceDirectory, '..', 'public', 'style.css'));
 
@@ -63,33 +64,6 @@ function sendHtml(response, html, status = 200, headers = {}) {
 function redirect(response, location, headers = {}) {
   response.writeHead(303, { location, 'cache-control': 'no-store', ...headers });
   response.end();
-}
-
-function validateProduct(form) {
-  const partNumber = (form.get('partNumber') ?? '').trim();
-  const description = (form.get('description') ?? '').trim();
-  const presentation = form.get('presentation') ?? '';
-  const brand = (form.get('brand') ?? '').trim();
-  const location = (form.get('location') ?? '').trim();
-  const minimumInput = (form.get('minimumStock') ?? '').trim();
-  const product = {
-    partNumber,
-    description,
-    presentation,
-    brand: brand || null,
-    location: location || null,
-    minimumStock: minimumInput === '' ? null : Number(minimumInput),
-  };
-
-  if (!partNumber || partNumber.length > 100) return { error: 'Escribe un P/N de hasta 100 caracteres.', product };
-  if (!description || description.length > 240) return { error: 'Escribe una descripción de hasta 240 caracteres.', product };
-  if (!presentationValues.has(presentation)) return { error: 'Elige una presentación válida: Set, Kit o Unidad.', product };
-  if (brand && brand.length > 100) return { error: 'La marca no puede superar los 100 caracteres.', product };
-  if (location && location.length > 120) return { error: 'La ubicación no puede superar los 120 caracteres.', product };
-  if (minimumInput !== '' && (!Number.isSafeInteger(product.minimumStock) || product.minimumStock < 0)) {
-    return { error: 'El mínimo de stock debe ser un número entero igual o mayor que cero.', product };
-  }
-  return { product };
 }
 
 function productFrom(form, previous = {}) {
@@ -322,12 +296,48 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
       }
 
       if (request.method === 'GET' && url.pathname === '/inventory') {
-        const message = url.searchParams.get('saved') === '1' ? 'Repuesto guardado.' : '';
+        const message = url.searchParams.get('imported') === '1' ? 'Importación aplicada.' : url.searchParams.get('saved') === '1' ? 'Repuesto guardado.' : '';
         return authenticatedPage(response, inventoryPage({
           ...session,
           products: listProducts(database),
           message,
         }));
+      }
+
+      if (['/imports', '/imports/confirm', '/imports/cancel'].includes(url.pathname)) {
+        if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+        const storedSession = sessions.get(session.id);
+        if (request.method === 'GET' && url.pathname === '/imports') {
+          return sendHtml(response, importPage(session));
+        }
+        if (request.method === 'POST') {
+          try {
+            const form = url.pathname === '/imports' ? await readImportForm(request) : await readForm(request);
+            if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+            if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
+            if (url.pathname === '/imports/cancel') {
+              delete storedSession.importReview;
+              return redirect(response, '/inventory');
+            }
+            if (url.pathname === '/imports') {
+              delete storedSession.importReview;
+              const review = await previewImport(database, form);
+              const confirmationToken = randomBytes(32).toString('base64url');
+              if (!review.rows.some((row) => row.errors.length)) storedSession.importReview = { review, confirmationToken };
+              return sendHtml(response, importPage({ ...session, review, confirmationToken }));
+            }
+            const pending = storedSession.importReview;
+            if (!pending || !matchesToken(form.get('confirmationToken') ?? '', pending.confirmationToken)) {
+              throw new ImportError('Revisa de nuevo el archivo antes de confirmar.', 409);
+            }
+            delete storedSession.importReview;
+            applyImport(database, session.userId, pending.review);
+            return redirect(response, '/inventory?imported=1');
+          } catch (error) {
+            if (!(error instanceof ImportError)) throw error;
+            return sendHtml(response, importPage({ ...session, error: error.message }), error.status);
+          }
+        }
       }
 
       if (request.method === 'GET' && url.pathname === '/products/new') {

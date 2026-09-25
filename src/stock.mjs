@@ -33,17 +33,22 @@ export function saveStock(database, userId, change) {
     if (!product || product.stock_version !== change.version || product.presentation !== change.presentation) {
       throw new StockError('Las existencias o la presentación han cambiado. Revisa de nuevo la operación.', 409);
     }
-    database.prepare(`UPDATE products SET quantity = ?, stock_version = stock_version + 1,
-      updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(change.newQuantity, change.productId);
-    database.prepare(`INSERT INTO stock_movements
-      (product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(change.productId, userId, change.operation,
-      change.quantity, change.previousQuantity, change.newQuantity, change.presentation, change.reason || null, new Date().toISOString());
+    recordStock(database, userId, change);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
+}
+
+// The caller owns the transaction and validates the reviewed product before writing.
+export function recordStock(database, userId, change, source = 'manual') {
+  database.prepare(`UPDATE products SET quantity = ?, stock_version = stock_version + 1,
+    updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(change.newQuantity, change.productId);
+  database.prepare(`INSERT INTO stock_movements
+    (product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(change.productId, userId, change.operation,
+    change.quantity, change.previousQuantity, change.newQuantity, change.presentation, change.reason || null, new Date().toISOString(), source);
 }
 
 export function stockHistory(database, productId) {

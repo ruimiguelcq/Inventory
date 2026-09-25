@@ -9,6 +9,7 @@ Aplicación web local para el inventario interno de un almacén. Permite configu
 ## Iniciar
 
 ```powershell
+npm install
 npm start
 ```
 
@@ -40,6 +41,25 @@ Las cantidades son presentaciones completas (SET, KIT o unidad) y nunca pueden q
 **Historial** muestra cada operación con cantidad anterior/nueva, usuario, fecha/hora UTC, presentación y motivo. No permite editar ni eliminar movimientos. El stock y su movimiento se guardan juntos en una transacción SQLite y se conservan al reiniciar.
 
 La primera ejecución tras esta actualización añade las tablas y columnas necesarias a la base de datos existente. Los artículos existentes y nuevos comienzan con cero existencias hasta registrar un ajuste o recuento.
+
+## Importar desde Excel
+
+Desde **Inventario → Importar Excel**, Gestión y Administración pueden cargar un archivo `.xlsx` con una sola hoja, hasta 2 MB y 1000 filas de datos. La primera fila contiene los encabezados:
+
+| P/N | Descripción | Presentación | Marca | Ubicación | Mínimo de stock | Cantidad |
+| --- | --- | --- | --- | --- | --- | --- |
+| 001-MAR | Junta de motor | KIT | Marina Parts | Caja 4 | 2 | 5 |
+
+- Guarda **P/N como texto** en Excel, incluidos los identificadores numéricos, para conservar ceros iniciales. Usa valores sin fórmulas. Presentaciones admitidas: `SET`, `KIT`, `unidad`.
+- **Datos descriptivos:** requiere P/N, Descripción y Presentación; crea artículos o actualiza los existentes por P/N, sin distinguir mayúsculas ASCII. Marca, Ubicación y Mínimo de stock son opcionales: una columna ausente conserva el valor existente y una celda vacía lo borra. Las altas sin importar existencias comienzan en cero.
+- **Existencias:** requiere P/N y Cantidad. Si solo importas existencias, los artículos deben existir. Elige explícitamente **Ajustar por** (sumar/restar) o **Establecer en** (total exacto). Las cantidades deben ser enteras y el resultado no puede ser negativo.
+- Se pueden activar ambas opciones. También se aceptan los encabezados `Ubicación principal`, `Mínimo` y `Disponible`, y encabezados sin acentos.
+
+**Revisar importación** muestra altas, actualizaciones, datos anteriores/nuevos y errores por fila. Los P/N duplicados dentro del archivo, campos obligatorios ausentes, fórmulas o cantidades inválidas bloquean el lote completo: corrige el archivo y vuelve a cargarlo. No se omiten filas inválidas ni se guardan cambios al previsualizar.
+
+**Confirmar importación** guarda todo en una única transacción. Si los artículos o sus existencias han cambiado desde la vista previa, exige revisarla de nuevo. El historial registra cada operación de stock con usuario, fecha/hora y origen **Importación Excel**. **Cancelar importación** descarta la revisión y no modifica datos. Una confirmación solo puede usarse una vez y pertenece a la sesión que la creó; otra vista previa válida sustituye la anterior. Las revisiones pendientes se pierden al cerrar sesión o reiniciar.
+
+La dependencia ExcelJS usa una sustitución de `uuid` por su versión 11 corregida, compatible con la API `v4` que utiliza.
 
 ## Probar
 

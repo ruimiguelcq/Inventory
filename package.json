@@ -9,5 +9,13 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

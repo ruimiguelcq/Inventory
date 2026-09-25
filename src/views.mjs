@@ -119,7 +119,7 @@ export function inventoryPage({ products, ...session }) {
         <h1>Inventario de repuestos</h1>
         <p class="page-subtitle">Consulta y mantén las piezas de tu almacén.</p>
       </div>
-      ${canManage ? '<a class="button button-primary" href="/products/new">Añadir repuesto</a>' : ''}
+      ${canManage ? '<div class="form-actions"><a class="button button-secondary" href="/imports">Importar Excel</a><a class="button button-primary" href="/products/new">Añadir repuesto</a></div>' : ''}
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
@@ -317,12 +317,71 @@ export function historyPage({ product, movements, ...session }) {
       ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}</div>
     <section class="inventory-panel" aria-label="Movimientos de existencias">
       ${movements.length ? `<div class="table-scroll"><table><thead><tr>
-        <th>Fecha/hora (UTC)</th><th>Usuario</th><th>Operación</th><th>Cantidad</th><th>Anterior</th><th>Nueva</th><th>Presentación</th><th>Motivo</th>
+        <th>Fecha/hora (UTC)</th><th>Usuario</th><th>Operación</th><th>Cantidad</th><th>Anterior</th><th>Nueva</th><th>Presentación</th><th>Motivo</th><th>Origen</th>
       </tr></thead><tbody>${movements.map((movement) => `<tr>
         <td><time datetime="${escapeHtml(movement.created_at)}">${escapeHtml(movement.created_at.replace('T', ' ').replace('Z', ' UTC'))}</time></td>
         <td>${escapeHtml(movement.username)}</td><td>${movement.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'}</td>
         <td>${movement.quantity}</td><td>${movement.previous_quantity}</td><td>${movement.new_quantity}</td>
-        <td>${escapeHtml(movement.presentation)}</td><td>${escapeHtml(movement.reason || '—')}</td>
+         <td>${escapeHtml(movement.presentation)}</td><td>${escapeHtml(movement.reason || '—')}</td>
+         <td>${movement.source === 'import' ? 'Importación Excel' : 'Manual'}</td>
       </tr>`).join('')}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay movimientos.</p></div>'}
     </section>`, session);
+}
+
+function importDetails(product) {
+  if (!product) return 'Artículo nuevo';
+  return `${escapeHtml(product.description)} · ${escapeHtml(product.presentation)}<br>
+    Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(product.minimumStock ?? product.minimum_stock ?? '—')}`;
+}
+
+export function importPage({ review, confirmationToken, error = '', ...session }) {
+  const invalid = review?.rows.filter((row) => row.errors.length).length ?? 0;
+  return page('Importar Excel', `
+    <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><span>Importar Excel</span></div>
+    <div class="page-heading"><div><p class="eyebrow">Carga revisada</p><h1>${review ? 'Revisar importación' : 'Importar Excel'}</h1>
+      <p>Los cambios solo se guardan al confirmar el lote completo.</p></div></div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    ${review ? `
+      <section class="inventory-panel" aria-label="Vista previa de importación">
+        <div class="table-toolbar"><div><h2>${review.rows.filter((row) => !row.previous && !row.errors.length).length} altas · ${review.rows.filter((row) => row.previous && !row.errors.length).length} actualizaciones · ${invalid} filas con errores</h2>
+          <p>Datos descriptivos: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
+        <div class="table-scroll"><table><thead><tr><th>Fila</th><th>P/N</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Existencias</th><th>Errores</th></tr></thead>
+          <tbody>${review.rows.map((row) => `<tr><td>${row.number}</td><td>${escapeHtml(row.partNumber)}</td>
+            <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
+            <td>${importDetails(row.previous)}</td><td>${row.product ? importDetails(row.product) : '—'}</td>
+            <td>${row.change ? `${row.change.previousQuantity} → ${row.change.newQuantity} ${escapeHtml(row.change.presentation)}<br>${review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${row.change.quantity}` : 'Sin cambios'}</td>
+            <td>${row.errors.map(escapeHtml).join('<br>')}</td></tr>`).join('')}</tbody>
+        </table></div>
+      </section>
+      ${invalid ? '<p class="form-error" role="alert">Corrige todas las filas con errores y vuelve a cargar el archivo. No se aplicará ninguna fila.</p>' : `
+        <form method="post" action="/imports/confirm" class="form-actions">
+          <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+          <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
+          <button class="button button-primary" type="submit">Confirmar importación</button>
+        </form>`}
+      <form method="post" action="/imports/cancel" class="form-actions">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <a class="button button-secondary" href="/imports">Cargar otro archivo</a>
+        <button class="button button-quiet" type="submit">Cancelar importación</button>
+      </form>` : `
+      <form class="product-form" method="post" action="/imports" enctype="multipart/form-data">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <section class="form-section"><h2>Archivo y opciones</h2>
+          <p>Excel .xlsx, una sola hoja, hasta 2 MB y 1000 filas. Primera fila: encabezados.</p>
+          <p>Columnas: <strong>P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Cantidad</strong>.
+            Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Usa valores, sin fórmulas.</p>
+          <p>Para datos descriptivos se requieren P/N, Descripción y Presentación. Las columnas opcionales ausentes se conservan; las celdas vacías las borran.
+            Para solo existencias se requieren P/N y Cantidad y el artículo debe existir. Las altas sin stock comienzan en cero.</p>
+          <div class="field"><label for="file">Archivo Excel</label><input id="file" name="file" type="file" accept=".xlsx" required></div>
+          <p><label><input type="checkbox" name="descriptions" checked> Importar datos descriptivos</label></p>
+          <p><label><input type="checkbox" name="stock"> Importar existencias</label></p>
+          <div class="field"><label for="operation">Operación para existencias</label><select id="operation" name="operation">
+            <option value="">Selecciona si importas existencias</option>
+            <option value="adjust">Ajustar por — sumar o restar la cantidad importada</option>
+            <option value="set">Establecer en — total exacto indicado</option>
+          </select></div>
+        </section>
+        <div class="form-actions"><a class="button button-quiet" href="/inventory">Volver al inventario</a>
+          <button class="button button-primary" type="submit">Revisar importación</button></div>
+      </form>`}`, session);
 }
