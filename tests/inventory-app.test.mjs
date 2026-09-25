@@ -38,12 +38,20 @@ test('the administrator can set up access and create a repuesto visible in the i
   const setupPage = await fetch(baseUrl);
   const setupHtml = await setupPage.text();
   assert.match(setupHtml, /Configura el acceso inicial/);
+  const setupToken = setupHtml.match(/name="setupToken" value="([^"]+)"/)[1];
+
+  const unverifiedSetup = await fetch(`${baseUrl}/setup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: 'admin', password: 'marina-segura-123' }),
+  });
+  assert.equal(unverifiedSetup.status, 403);
 
   const setupResponse = await fetch(`${baseUrl}/setup`, {
     method: 'POST',
     redirect: 'manual',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ username: 'admin', password: 'marina-segura-123' }),
+    body: new URLSearchParams({ setupToken, username: 'admin', password: 'marina-segura-123' }),
   });
   assert.equal(setupResponse.status, 303);
   const setCookie = setupResponse.headers.get('set-cookie');
@@ -110,6 +118,7 @@ test('the administrator can edit a repuesto and see the updated details', async 
   assert.equal(editPage.status, 200);
   const editHtml = await editPage.text();
   assert.match(editHtml, /Editar repuesto/);
+  assert.match(editHtml, /Ubicación principal/);
 
   const response = await fetch(`${baseUrl}/products/1`, {
     method: 'POST',

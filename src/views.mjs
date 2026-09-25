@@ -52,7 +52,7 @@ function page(title, content, { active = 'inventory', username, csrfToken, messa
 </html>`;
 }
 
-export function setupPage({ error = '' } = {}) {
+export function setupPage({ error = '', setupToken = '' } = {}) {
   return page('Configurar acceso', `
     <section class="auth-layout">
       <div class="auth-intro">
@@ -64,6 +64,7 @@ export function setupPage({ error = '' } = {}) {
         <h2>Configura el acceso inicial</h2>
         <p class="form-hint">Elige un nombre de usuario y una contraseña de al menos 12 caracteres.</p>
         ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+        <input type="hidden" name="setupToken" value="${escapeHtml(setupToken)}">
         <label for="username">Usuario</label>
         <input id="username" name="username" autocomplete="username" minlength="3" maxlength="50" required>
         <label for="password">Contraseña</label>
@@ -189,7 +190,7 @@ export function productFormPage({ product = {}, username, csrfToken, error = '',
         <p class="form-hint">La ubicación puede ser un estante, una caja u otra referencia interna.</p>
         <div class="form-grid">
           <div class="field">
-            <label for="location">Ubicación <span class="optional-mark">Opcional</span></label>
+            <label for="location">Ubicación principal <span class="optional-mark">Opcional</span></label>
             <input id="location" name="location" value="${escapeHtml(product.location ?? '')}" maxlength="120">
           </div>
           <div class="field">

@@ -97,8 +97,32 @@ function productFrom(form, previous = {}) {
   };
 }
 
+function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400 } = {}) {
+  return sendHtml(response, productFormPage({
+    product: productFrom(form, previousProduct),
+    username: session.username,
+    csrfToken: session.csrfToken,
+    isNew,
+    error: message,
+  }), status);
+}
+
 function isUniqueViolation(error) {
   return error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: products\.part_number/i.test(error.message);
+}
+
+function saveProduct(database, response, { form, session, product, isNew, existingProduct }) {
+  try {
+    if (isNew) insertProduct(database, product);
+    else updateProduct(database, existingProduct.id, product);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      const message = isNew ? 'Ya existe un repuesto con ese P/N.' : 'Ya existe otro repuesto con ese P/N.';
+      return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409 });
+    }
+    throw error;
+  }
+  return redirect(response, '/inventory?saved=1');
 }
 
 function createSession(sessions, user) {
@@ -111,6 +135,13 @@ function createSession(sessions, user) {
   };
   sessions.set(id, session);
   return { id, session };
+}
+
+function startSession(response, sessions, user) {
+  const { id } = createSession(sessions, user);
+  return redirect(response, '/inventory', {
+    'set-cookie': `inventory_session=${encodeURIComponent(id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}`,
+  });
 }
 
 function sessionFor(request, sessions) {
@@ -129,14 +160,17 @@ function authenticatedPage(response, content) {
 }
 
 function validateCsrf(form, session) {
-  const submitted = form.get('csrfToken') ?? '';
-  const expected = session.csrfToken;
+  return matchesToken(form.get('csrfToken') ?? '', session.csrfToken);
+}
+
+function matchesToken(submitted, expected) {
   return submitted.length === expected.length && timingSafeEqual(Buffer.from(submitted), Buffer.from(expected));
 }
 
 export function createInventoryServer({ databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite' } = {}) {
   const database = openDatabase(databasePath);
   const sessions = new Map();
+  const initialSetupToken = randomBytes(32).toString('base64url');
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -154,24 +188,27 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
       }
 
       if (request.method === 'GET' && url.pathname === '/') {
-        if (!hasAdministrator(database)) return sendHtml(response, setupPage());
+        if (!hasAdministrator(database)) return sendHtml(response, setupPage({ setupToken: initialSetupToken }));
         return redirect(response, session ? '/inventory' : '/login');
       }
 
       if (request.method === 'GET' && url.pathname === '/setup') {
-        return sendHtml(response, hasAdministrator(database) ? loginPage() : setupPage());
+        return sendHtml(response, hasAdministrator(database) ? loginPage() : setupPage({ setupToken: initialSetupToken }));
       }
 
       if (request.method === 'POST' && url.pathname === '/setup') {
         const form = await readForm(request);
         if (hasAdministrator(database)) return sendHtml(response, loginPage({ error: 'El acceso inicial ya se configuró. Inicia sesión.' }), 409);
+        if (!matchesToken(form.get('setupToken') ?? '', initialSetupToken)) {
+          return sendHtml(response, setupPage({ error: 'No se pudo verificar el formulario. Recarga la página e inténtalo de nuevo.', setupToken: initialSetupToken }), 403);
+        }
         const username = (form.get('username') ?? '').trim();
         const password = form.get('password') ?? '';
         if (!/^[\p{L}\p{N}_.-]{3,50}$/u.test(username)) {
-          return sendHtml(response, setupPage({ error: 'El usuario debe tener entre 3 y 50 letras, números, puntos, guiones o guiones bajos.' }), 400);
+          return sendHtml(response, setupPage({ error: 'El usuario debe tener entre 3 y 50 letras, números, puntos, guiones o guiones bajos.', setupToken: initialSetupToken }), 400);
         }
         if (password.length < PASSWORD_MIN_LENGTH) {
-          return sendHtml(response, setupPage({ error: 'La contraseña debe tener al menos 12 caracteres.' }), 400);
+          return sendHtml(response, setupPage({ error: 'La contraseña debe tener al menos 12 caracteres.', setupToken: initialSetupToken }), 400);
         }
         const passwordSalt = randomBytes(16).toString('hex');
         const passwordHash = (await scrypt(password, passwordSalt, 64)).toString('hex');
@@ -180,14 +217,11 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
           createAdministrator(database, { username, passwordSalt, passwordHash });
         } catch (error) {
           if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: users\.username/i.test(error.message)) {
-            return sendHtml(response, setupPage({ error: 'Ese usuario ya existe. Elige otro.' }), 409);
+            return sendHtml(response, setupPage({ error: 'Ese usuario ya existe. Elige otro.', setupToken: initialSetupToken }), 409);
           }
           throw error;
         }
-        const { id } = createSession(sessions, { id: 1, username });
-        return redirect(response, '/inventory', {
-          'set-cookie': `inventory_session=${encodeURIComponent(id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}`,
-        });
+        return startSession(response, sessions, { id: 1, username });
       }
 
       if (request.method === 'GET' && url.pathname === '/login') {
@@ -206,10 +240,7 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
           await scrypt(supplied, randomBytes(16), 64);
         }
         if (!valid) return sendHtml(response, loginPage({ error: 'Usuario o contraseña incorrectos.' }), 401);
-        const { id } = createSession(sessions, user);
-        return redirect(response, '/inventory', {
-          'set-cookie': `inventory_session=${encodeURIComponent(id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}`,
-        });
+        return startSession(response, sessions, user);
       }
 
       if (request.method === 'POST' && url.pathname === '/logout') {
@@ -240,20 +271,12 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         return authenticatedPage(response, productFormPage({ username: session.username, csrfToken: session.csrfToken }));
       }
 
-      if (request.method === 'POST' && url.pathname === '/products') {
+        if (request.method === 'POST' && url.pathname === '/products') {
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const { error, product } = validateProduct(form);
-        if (error) return sendHtml(response, productFormPage({ product: productFrom(form), username: session.username, csrfToken: session.csrfToken, error }), 400);
-        try {
-          insertProduct(database, product);
-        } catch (insertError) {
-          if (isUniqueViolation(insertError)) {
-            return sendHtml(response, productFormPage({ product: productFrom(form), username: session.username, csrfToken: session.csrfToken, error: 'Ya existe un repuesto con ese P/N.' }), 409);
-          }
-          throw insertError;
-        }
-        return redirect(response, '/inventory?saved=1');
+        if (error) return sendProductFormError(response, form, session, error);
+        return saveProduct(database, response, { form, session, product, isNew: true });
       }
 
       const editMatch = url.pathname.match(/^\/products\/(\d+)\/edit$/);
@@ -271,16 +294,8 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         const existingProduct = findProduct(database, id);
         if (!existingProduct) return sendHtml(response, notFoundPage({ username: session.username, csrfToken: session.csrfToken }), 404);
         const { error, product } = validateProduct(form);
-        if (error) return sendHtml(response, productFormPage({ product: productFrom(form, existingProduct), username: session.username, csrfToken: session.csrfToken, isNew: false, error }), 400);
-        try {
-          updateProduct(database, id, product);
-        } catch (updateError) {
-          if (isUniqueViolation(updateError)) {
-            return sendHtml(response, productFormPage({ product: productFrom(form, existingProduct), username: session.username, csrfToken: session.csrfToken, isNew: false, error: 'Ya existe otro repuesto con ese P/N.' }), 409);
-          }
-          throw updateError;
-        }
-        return redirect(response, '/inventory?saved=1');
+        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct });
+        return saveProduct(database, response, { form, session, product, isNew: false, existingProduct });
       }
 
       return sendHtml(response, session ? notFoundPage({ username: session.username, csrfToken: session.csrfToken }) : loginPage(), 404);
