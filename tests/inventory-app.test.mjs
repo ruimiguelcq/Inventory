@@ -93,7 +93,7 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /Marina Parts/);
   assert.match(savedHtml, /Estante B · caja 4/);
   assert.match(savedHtml, /<td class="quantity-cell">2<\/td>/);
-  assert.doesNotMatch(savedHtml, /<th[^>]*>Disponible<\/th>/);
+  assert.match(savedHtml, /<th[^>]*>Disponible<\/th>/);
 });
 
 test('a duplicate P/N is rejected without changing the saved repuesto', async () => {
@@ -338,7 +338,7 @@ test('demotion to consulta rejects a write whose request body is still arriving'
   const accounts = await fetch(`${baseUrl}/users`, { headers: { cookie: administratorCookie } });
   const userId = (await accounts.text()).match(/<td>gestion<\/td>[\s\S]*?action="\/users\/(\d+)\/role"/)[1];
   const adminToken = await getCsrfToken();
-  for (const path of ['/products', '/products/1']) {
+  for (const path of ['/products', '/products/1', '/products/1/stock', '/products/1/stock/confirm']) {
     assert.equal((await postForm(`/users/${userId}/role`, { csrfToken: adminToken, role: 'manager' })).status, 303);
     const pending = request(`${baseUrl}${path}`, {
       method: 'POST', headers: { cookie, Expect: '100-continue', 'content-type': 'application/x-www-form-urlencoded' },
@@ -357,4 +357,115 @@ test('demotion to consulta rejects a write whose request body is still arriving'
   const html = await inventory.text();
   assert.match(html, /Conchas de biela originales/);
   assert.doesNotMatch(html, /TARDIO|Cambio tardío/);
+});
+
+async function readPage(path, cookie = administratorCookie) {
+  const response = await fetch(`${baseUrl}${path}`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  return response.text();
+}
+
+test('stock changes are reviewed before saving and attributed in the article history', async () => {
+  const csrfToken = await getCsrfToken();
+  assert.match(await readPage('/inventory'), /href="\/products\/1\/stock"/);
+  assert.match(await readPage('/products/1/edit'), /href="\/products\/1\/stock"/);
+  const form = await readPage('/products/1/stock');
+  assert.match(form, /Ajustar por/);
+  assert.match(form, /Establecer en/);
+  assert.match(form, /SET/);
+  const preview = await postForm('/products/1/stock', { csrfToken, operation: 'adjust', quantity: '5', reason: 'Recepción del proveedor' });
+  assert.equal(preview.status, 200);
+  const html = await preview.text();
+  assert.match(html, /Revisar cambio/);
+  assert.match(html, /Anterior: <strong>0<\/strong>/);
+  assert.match(html, /Nueva: <strong>5<\/strong>/);
+  assert.match(await readPage('/products/1/history'), /Todavía no hay movimientos/);
+  const confirmationToken = html.match(/name="confirmationToken" value="([^"]+)"/)[1];
+  const saved = await postForm('/products/1/stock/confirm', { csrfToken, confirmationToken });
+  assert.equal(saved.status, 303);
+  const history = await readPage(saved.headers.get('location'));
+  assert.match(history, /Ajustar por/);
+  assert.match(history, /<td>0<\/td><td>5<\/td>/);
+  assert.ok(history.includes(administratorUsername));
+  assert.match(history, /Recepción del proveedor/);
+  assert.match(history, /<time datetime="\d{4}-\d{2}-\d{2}T/);
+  assert.match(await readPage('/products/1/stock'), /Disponible: <strong>5<\/strong>/);
+});
+
+async function previewStock(fields, cookie = administratorCookie, productId = 1) {
+  const csrfToken = await getCsrfToken(cookie);
+  const response = await postForm(`/products/${productId}/stock`, { csrfToken, ...fields }, cookie);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  return { csrfToken, confirmationToken: html.match(/name="confirmationToken" value="([^"]+)"/)[1] };
+}
+
+test('gestión can subtract complete presentations and set an exact total, while consulta can only read history', async () => {
+  const accountsHtml = await readPage('/users');
+  const userId = accountsHtml.match(/<td>gestion<\/td>[\s\S]*?action="\/users\/(\d+)\/role"/)[1];
+  await postForm(`/users/${userId}/role`, { csrfToken: await getCsrfToken(), role: 'manager' });
+  const manager = await signIn('gestion', 'gestion-segura-123');
+  const subtract = await previewStock({ operation: 'adjust', quantity: '-2', reason: '<Entrega>' }, manager);
+  assert.equal((await postForm('/products/1/stock/confirm', subtract, manager)).status, 303);
+  assert.match(await readPage('/products/1/history', manager), /<td>-2<\/td><td>5<\/td><td>3<\/td>/);
+  const set = await previewStock({ operation: 'set', quantity: '8' }, manager);
+  assert.equal((await postForm('/products/1/stock/confirm', set, manager)).status, 303);
+  const viewer = await signIn('consulta', 'consulta-segura-123');
+  const history = await readPage('/products/1/history', viewer);
+  assert.match(history, /Establecer en/);
+  assert.match(history, /<td>8<\/td><td>3<\/td><td>8<\/td>/);
+  assert.match(history, /<td>gestion<\/td>/);
+  assert.match(history, /&lt;Entrega&gt;/);
+  assert.doesNotMatch(history, /Ajustar existencias|Confirmar cambio|Editar|Eliminar/);
+  assert.equal((await fetch(`${baseUrl}/products/1/stock`, { headers: { cookie: viewer } })).status, 403);
+  assert.equal((await postForm('/products/1/stock/confirm', { csrfToken: await getCsrfToken(viewer), confirmationToken: set.confirmationToken }, viewer)).status, 403);
+  for (const path of ['/products/1/history', '/products/1/history/1', '/products/1/history/1/delete']) {
+    assert.equal((await postForm(path, { csrfToken: await getCsrfToken() })).status, 404);
+  }
+});
+
+test('invalid quantities and unverified confirmations leave stock and history unchanged', async () => {
+  const csrfToken = await getCsrfToken();
+  const before = await readPage('/products/1/history');
+  for (const fields of [
+    { operation: 'adjust', quantity: '-9' }, { operation: 'set', quantity: '-1' },
+    { quantity: '1.5' }, { quantity: '' }, { quantity: 'NaN' }, { quantity: 'Infinity' },
+    { quantity: '9007199254740992' }, { quantity: '9007199254740991' },
+    { operation: 'other' }, { reason: 'x'.repeat(501) },
+  ]) {
+    const response = await postForm('/products/1/stock', { csrfToken, operation: 'adjust', quantity: '1', ...fields });
+    assert.equal(response.status, 400, JSON.stringify(fields));
+    assert.match(await response.text(), /role="alert"/);
+  }
+  assert.equal((await postForm('/products/1/stock', { operation: 'set', quantity: '0' })).status, 403);
+  assert.equal((await postForm('/products/1/stock/confirm', { csrfToken, confirmationToken: 'forged' })).status, 409);
+  assert.equal((await postForm('/products/99999/stock', { csrfToken })).status, 404);
+  assert.equal(await readPage('/products/1/history'), before);
+});
+
+test('stale reviews and repeated submissions cannot overwrite or duplicate stock movements', async () => {
+  const otherAdmin = await signIn(administratorUsername, 'marina-segura-123');
+  const stale = await previewStock({ operation: 'set', quantity: '2' });
+  const concurrent = await previewStock({ operation: 'adjust', quantity: '1' }, otherAdmin);
+  assert.equal((await postForm('/products/1/stock/confirm', concurrent, otherAdmin)).status, 303);
+  const history = await readPage('/products/1/history');
+  assert.equal((await postForm('/products/1/stock/confirm', concurrent, otherAdmin)).status, 409);
+  const conflict = await postForm('/products/1/stock/confirm', stale);
+  assert.equal(conflict.status, 409);
+  assert.match(await conflict.text(), /han cambiado/);
+  assert.equal(await readPage('/products/1/history'), history);
+  const zero = await previewStock({ operation: 'set', quantity: '0' });
+  assert.equal((await postForm('/products/1/stock/confirm', { ...zero, quantity: '999', operation: 'adjust', userId: '999' })).status, 303);
+  assert.match(await readPage('/products/1/history'), /<td>0<\/td><td>9<\/td><td>0<\/td>/);
+});
+
+test('stock and its complete history survive restart', async () => {
+  const before = await readPage('/products/1/history');
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  server = createInventoryServer({ databasePath: join(temporaryDirectory, 'inventory.sqlite') });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
+  administratorCookie = await signIn(administratorUsername, 'marina-segura-123');
+  const after = await readPage('/products/1/history');
+  assert.equal(after.replace(/name="csrfToken" value="[^"]+"/g, ''), before.replace(/name="csrfToken" value="[^"]+"/g, ''));
 });

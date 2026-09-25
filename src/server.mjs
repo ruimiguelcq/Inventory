@@ -20,6 +20,8 @@ import {
 } from './database.mjs';
 import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, renderPresentations, setupPage } from './views.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
+import { reviewStock, saveStock, stockHistory } from './stock.mjs';
+import { stockPage, historyPage } from './views.mjs';
 
 const scrypt = promisify(scryptCallback);
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
@@ -330,6 +332,45 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
 
       if (request.method === 'GET' && url.pathname === '/products/new') {
         return authenticatedPage(response, productFormPage(session));
+      }
+
+      const stockMatch = url.pathname.match(/^\/products\/(\d+)\/(stock(?:\/confirm)?|history)$/);
+      if (stockMatch) {
+        const product = findProduct(database, Number(stockMatch[1]));
+        if (!product) return sendHtml(response, notFoundPage(session), 404);
+        const action = stockMatch[2];
+        if (request.method === 'GET' && action === 'history') {
+          return sendHtml(response, historyPage({ ...session, product, movements: stockHistory(database, product.id) }));
+        }
+        if (action.startsWith('stock')) {
+          if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+          if (request.method === 'GET' && action === 'stock') return sendHtml(response, stockPage({ ...session, product }));
+          if (request.method === 'POST') {
+            const form = await readForm(request);
+            if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+            const user = findUser(database, session.userId);
+            if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+            const storedSession = sessions.get(session.id);
+            const currentProduct = findProduct(database, product.id);
+            try {
+              if (action === 'stock') {
+                const change = reviewStock(currentProduct, form);
+                const confirmationToken = randomBytes(32).toString('base64url');
+                storedSession.stockReview = { change, confirmationToken };
+                return sendHtml(response, stockPage({ ...session, product: currentProduct, change, confirmationToken }));
+              }
+              const review = storedSession.stockReview;
+              if (!review || review.change.productId !== product.id || !matchesToken(form.get('confirmationToken') ?? '', review.confirmationToken)) {
+                return sendHtml(response, stockPage({ ...session, product: currentProduct, error: 'Revisa de nuevo el cambio antes de confirmarlo.' }), 409);
+              }
+              delete storedSession.stockReview;
+              saveStock(database, session.userId, review.change);
+              return redirect(response, `/products/${product.id}/history`);
+            } catch (error) {
+              return sendHtml(response, stockPage({ ...session, product: findProduct(database, product.id), values: Object.fromEntries(form), error: error.message }), error.status ?? 400);
+            }
+          }
+        }
       }
 
       if (request.method === 'POST' && url.pathname === '/products') {

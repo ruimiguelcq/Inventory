@@ -107,6 +107,8 @@ export function inventoryPage({ products, ...session }) {
       <td>${product.brand ? escapeHtml(product.brand) : '<span class="muted">—</span>'}</td>
       <td>${product.location ? escapeHtml(product.location) : '<span class="muted">—</span>'}</td>
       <td class="quantity-cell">${product.minimum_stock ?? '<span class="muted">—</span>'}</td>
+      <td class="quantity-cell">${product.quantity}</td>
+      <td><a href="/products/${product.id}/history">Historial</a>${canManage ? ` · <a href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}</td>
       ${canManage ? `<td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>` : ''}
     </tr>`).join('');
 
@@ -137,6 +139,8 @@ export function inventoryPage({ products, ...session }) {
               <th scope="col">Marca</th>
               <th scope="col">Ubicación</th>
               <th scope="col" class="align-right">Mínimo</th>
+              <th scope="col" class="align-right">Disponible</th>
+              <th scope="col">Existencias</th>
               ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
             </tr></thead>
             <tbody>${rows}</tbody>
@@ -210,6 +214,7 @@ export function productFormPage({ product = {}, error = '', isNew = true, ...ses
     <div class="breadcrumb"><a href="/inventory">Inventario</a><span aria-hidden="true">/</span><span>${title}</span></div>
     <div class="page-heading form-heading">
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
+      ${!isNew ? `<div><a href="/products/${product.id}/stock">Ajustar existencias</a> · <a href="/products/${product.id}/history">Historial</a></div>` : ''}
     </div>
     <form class="product-form" method="post" action="${action}">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
@@ -270,4 +275,54 @@ export function notFoundPage(session = {}) {
 
 export function renderPresentations() {
   return PRESENTATIONS;
+}
+
+export function stockPage({ product, change, confirmationToken, values = {}, error = '', ...session }) {
+  return page('Ajustar existencias', `
+    <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><a href="/products/${product.id}/history">Historial</a></div>
+    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)} · ${escapeHtml(product.presentation)}</p>
+      <h1>${change ? 'Revisar cambio' : 'Ajustar existencias'}</h1><p>${escapeHtml(product.description)}</p></div></div>
+    <form class="product-form" method="post" action="/products/${product.id}/stock${change ? '/confirm' : ''}">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      <section class="form-section">
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+        ${change ? `
+          <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
+          <h2>${change.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${change.quantity} ${escapeHtml(change.presentation)}</h2>
+          <p>Anterior: <strong>${change.previousQuantity}</strong> → Nueva: <strong>${change.newQuantity}</strong></p>
+          <p>Motivo: ${escapeHtml(change.reason || 'Sin motivo')}</p>` : `
+          <p>Disponible: <strong>${product.quantity}</strong> ${escapeHtml(product.presentation)}</p>
+          <p class="form-hint">Cuenta presentaciones vendibles completas; no componentes de SET o KIT.</p>
+          <div class="form-grid">
+            <div class="field"><label for="operation">Operación</label><select id="operation" name="operation" required>
+              <option value="adjust" ${values.operation === 'adjust' ? 'selected' : ''}>Ajustar por — sumar o restar</option>
+              <option value="set" ${values.operation === 'set' ? 'selected' : ''}>Establecer en — total exacto</option>
+            </select></div>
+            <div class="field"><label for="quantity">Cantidad (${escapeHtml(product.presentation)})</label>
+              <input id="quantity" name="quantity" type="number" step="1" value="${escapeHtml(values.quantity ?? '')}" required></div>
+            <div class="field field-wide"><label for="reason">Motivo (opcional)</label>
+              <input id="reason" name="reason" maxlength="500" value="${escapeHtml(values.reason ?? '')}"></div>
+          </div>`}
+      </section>
+      <div class="form-actions"><a class="button button-quiet" href="/products/${product.id}/${change ? 'stock' : 'history'}">${change ? 'Volver' : 'Cancelar'}</a>
+        <button class="button button-primary" type="submit">${change ? 'Confirmar cambio' : 'Revisar cambio'}</button></div>
+    </form>`, session);
+}
+
+export function historyPage({ product, movements, ...session }) {
+  return page('Historial de existencias', `
+    <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><span>Historial</span></div>
+    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)}</p><h1>Historial de existencias</h1>
+      <p>${escapeHtml(product.description)} · Disponible: <strong>${product.quantity}</strong> ${escapeHtml(product.presentation)}</p></div>
+      ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}</div>
+    <section class="inventory-panel" aria-label="Movimientos de existencias">
+      ${movements.length ? `<div class="table-scroll"><table><thead><tr>
+        <th>Fecha/hora (UTC)</th><th>Usuario</th><th>Operación</th><th>Cantidad</th><th>Anterior</th><th>Nueva</th><th>Presentación</th><th>Motivo</th>
+      </tr></thead><tbody>${movements.map((movement) => `<tr>
+        <td><time datetime="${escapeHtml(movement.created_at)}">${escapeHtml(movement.created_at.replace('T', ' ').replace('Z', ' UTC'))}</time></td>
+        <td>${escapeHtml(movement.username)}</td><td>${movement.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'}</td>
+        <td>${movement.quantity}</td><td>${movement.previous_quantity}</td><td>${movement.new_quantity}</td>
+        <td>${escapeHtml(movement.presentation)}</td><td>${escapeHtml(movement.reason || '—')}</td>
+      </tr>`).join('')}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay movimientos.</p></div>'}
+    </section>`, session);
 }

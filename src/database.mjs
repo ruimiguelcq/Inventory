@@ -29,6 +29,27 @@ export function openDatabase(databasePath) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'quantity')) {
+    database.exec(`BEGIN IMMEDIATE;
+      ALTER TABLE products ADD COLUMN quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0 AND quantity <= 9007199254740991);
+      ALTER TABLE products ADD COLUMN stock_version INTEGER NOT NULL DEFAULT 0;
+      COMMIT;`);
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id INTEGER PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
+      quantity INTEGER NOT NULL,
+      previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
+      new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
+      presentation TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS stock_movements_product ON stock_movements(product_id, id);
+  `);
   return database;
 }
 
@@ -88,7 +109,7 @@ export function findProduct(database, id) {
 
 export function listProducts(database) {
   return database.prepare(`
-    SELECT id, part_number, description, presentation, brand, location, minimum_stock
+    SELECT id, part_number, description, presentation, brand, location, minimum_stock, quantity
     FROM products
     ORDER BY part_number COLLATE NOCASE
   `).all();
