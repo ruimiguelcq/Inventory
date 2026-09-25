@@ -20,7 +20,7 @@ export function validateProduct(form) {
   return { product };
 }
 
-// Cero existencias es "agotado"; con mínimo configurado, cantidad menor o igual al mínimo es "stock bajo".
+// Cero existencias tiene prioridad y se marca "agotado"; con mínimo configurado, cantidad menor o igual al mínimo es "stock bajo".
 export function stockStatus(product) {
   if (product.quantity === 0) return 'agotado';
   if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';

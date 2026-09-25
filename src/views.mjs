@@ -161,17 +161,17 @@ export function inventoryPage({ products, filters = {}, ...session }) {
       ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
     </tr></thead>`;
 
-  const headingTitle = archivedView ? 'Repuestos archivados' : hasActiveFilter ? 'Resultados' : 'Todos los repuestos';
+  const headingTitle = hasActiveFilter ? 'Resultados' : archivedView ? 'Repuestos archivados' : 'Todos los repuestos';
 
-  const emptyState = archivedView
+  const emptyState = hasActiveFilter
     ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
-      <h3>No hay repuestos archivados</h3>
-      <p>Al archivar un repuesto, se retira del inventario activo sin borrar su historial.</p></div>`
-    : hasActiveFilter
+      <h3>Sin resultados</h3>
+      <p>Ningún repuesto coincide con la búsqueda o los filtros.</p>
+      <a class="button button-secondary" href="/inventory">Limpiar filtros</a></div>`
+    : archivedView
       ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
-        <h3>Sin resultados</h3>
-        <p>Ningún repuesto coincide con la búsqueda o los filtros.</p>
-        <a class="button button-secondary" href="/inventory">Limpiar filtros</a></div>`
+        <h3>No hay repuestos archivados</h3>
+        <p>Al archivar un repuesto, se retira del inventario activo sin borrar su historial.</p></div>`
       : `<div class="empty-state">
           <span class="empty-icon" aria-hidden="true">⌁</span>
           <h3>Tu inventario está listo para empezar</h3>

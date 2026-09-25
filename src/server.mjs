@@ -166,6 +166,17 @@ async function hashPassword(password) {
   return { passwordSalt, passwordHash };
 }
 
+// Filters shared by the inventory view and the generic error fallback so both show a consistent list.
+function inventoryFilters(params) {
+  return {
+    q: (params.get('q') ?? '').trim(),
+    presentation: params.get('presentation') ?? '',
+    outOfStock: params.get('outOfStock') === 'on',
+    lowStock: params.get('lowStock') === 'on',
+    archived: params.get('archived') === 'on',
+  };
+}
+
 export function createInventoryServer({ databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite' } = {}) {
   const database = openDatabase(databasePath);
   const sessions = new Map();
@@ -328,13 +339,7 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         return authenticatedPage(response, inventoryPage({
           ...session,
           products: filterProducts(listProducts(database), params),
-          filters: {
-            q: (params.get('q') ?? '').trim(),
-            presentation: params.get('presentation') ?? '',
-            outOfStock: params.get('outOfStock') === 'on',
-            lowStock: params.get('lowStock') === 'on',
-            archived: params.get('archived') === 'on',
-          },
+          filters: inventoryFilters(params),
           message,
         }));
       }
@@ -440,6 +445,9 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+        // A role may change while the request body is arriving. Check again at the write boundary.
+        const user = findUser(database, session.userId);
+        if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
         const product = findProduct(database, Number(archiveMatch[1]));
         if (!product) return sendHtml(response, notFoundPage(session), 404);
         const archiving = archiveMatch[2] === 'archive';
@@ -469,7 +477,8 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
       return sendHtml(response, notFoundPage(session), 404);
     } catch (error) {
       const message = error.message === 'El formulario supera el tamaño permitido.' ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
-      sendHtml(response, session ? inventoryPage({ ...session, products: listProducts(database), message }) : loginPage({ error: message }), 400);
+      const filters = inventoryFilters(url.searchParams);
+      sendHtml(response, session ? inventoryPage({ ...session, products: filterProducts(listProducts(database), url.searchParams), filters, message }) : loginPage({ error: message }), 400);
     }
   });
 

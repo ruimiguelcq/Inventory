@@ -338,7 +338,7 @@ test('demotion to consulta rejects a write whose request body is still arriving'
   const accounts = await fetch(`${baseUrl}/users`, { headers: { cookie: administratorCookie } });
   const userId = (await accounts.text()).match(/<td>gestion<\/td>[\s\S]*?action="\/users\/(\d+)\/role"/)[1];
   const adminToken = await getCsrfToken();
-  for (const path of ['/products', '/products/1', '/products/1/stock', '/products/1/stock/confirm']) {
+  for (const path of ['/products', '/products/1', '/products/1/stock', '/products/1/stock/confirm', '/products/1/archive', '/products/1/restore']) {
     assert.equal((await postForm(`/users/${userId}/role`, { csrfToken: adminToken, role: 'manager' })).status, 303);
     const pending = request(`${baseUrl}${path}`, {
       method: 'POST', headers: { cookie, Expect: '100-continue', 'content-type': 'application/x-www-form-urlencoded' },

@@ -32,7 +32,7 @@ async function app(t) {
     cookie = response.headers.get('set-cookie').split(';')[0];
     return token(await (await get('/inventory')).text());
   };
-  return { get, post, token, csrfToken, signIn, set cookie(value) { cookie = value; } };
+  return { url, get, post, token, csrfToken, signIn, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
 }
 
 async function setStock(a, id, quantity) {
@@ -122,6 +122,18 @@ test('archiving retires an article from the active list, preserves its history a
   const history = await (await a.get('/products/1/history')).text();
   assert.match(history, /Establecer en/);
 
+  // A filter with no matches wins over the archived empty state.
+  assert.match(await (await a.get('/inventory?archived=on&q=zzz')).text(), /Sin resultados/);
+
+  // The generic error fallback never shows archived articles as active.
+  const oversized = await fetch(`${a.url}/products`, {
+    method: 'POST', headers: { cookie: a.cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: 'x'.repeat(17000),
+  });
+  assert.equal(oversized.status, 400);
+  const fallback = await oversized.text();
+  assert.doesNotMatch(fallback, /JUNTA/);
+  assert.match(fallback, /ANODO/);
+
   const restore = await a.post('/products/1/restore', { csrfToken: a.csrfToken });
   assert.equal(restore.status, 303);
   assert.match(await (await a.get('/inventory')).text(), /JUNTA/);
@@ -131,16 +143,42 @@ test('archiving requires gestión, a valid CSRF token and an existing article', 
   const a = await app(t);
   await seed(a);
 
-  assert.equal((await a.post('/products/1/archive', {})).status, 403);
-  assert.equal((await a.post('/products/9999/archive', { csrfToken: a.csrfToken })).status, 404);
+  for (const action of ['archive', 'restore']) {
+    assert.equal((await a.post(`/products/1/${action}`, {})).status, 403, `${action} without CSRF`);
+    assert.equal((await a.post(`/products/9999/${action}`, { csrfToken: a.csrfToken })).status, 404, `${action} unknown id`);
+  }
 
   await a.post('/users', { csrfToken: a.csrfToken, username: 'consulta', password: 'consulta-segura-123', role: 'viewer' });
   const viewerToken = await a.signIn('consulta', 'consulta-segura-123');
   assert.equal((await a.post('/products/1/archive', { csrfToken: viewerToken })).status, 403);
+  assert.equal((await a.post('/products/1/restore', { csrfToken: viewerToken })).status, 403);
 
-  const viewerPage = await (await a.get('/inventory')).text();
+  const viewerPage = await (await a.get('/inventory?archived=on')).text();
   assert.doesNotMatch(viewerPage, /Archivar|Desarchivar|Ajustar existencias/);
-  assert.match(viewerPage, /JUNTA/);
+  const viewerActive = await (await a.get('/inventory')).text();
+  assert.doesNotMatch(viewerActive, /Archivar|Desarchivar|Ajustar existencias/);
+  assert.match(viewerActive, /JUNTA/);
+});
+
+test('status filters combine as a union and respect the minimum boundaries', async (t) => {
+  const a = await app(t);
+  await seed(a);
+
+  const both = await (await a.get('/inventory?outOfStock=on&lowStock=on')).text();
+  assert.match(both, /JUNTA/);
+  assert.match(both, /KIT-BOMBA/);
+  assert.match(both, /FILTRO/);
+  assert.doesNotMatch(both, /ANODO/);
+
+  // Minimum 0: quantity 0 is agotado, any positive quantity is not low stock.
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'MIN-CERO', description: 'Mínimo cero', presentation: 'unidad', minimumStock: '0' })).status, 303);
+  const zero = await (await a.get('/inventory?outOfStock=on')).text();
+  assert.match(zero, /MIN-CERO/);
+  assert.doesNotMatch(await (await a.get('/inventory?lowStock=on')).text(), /MIN-CERO/);
+  await setStock(a, 5, 3);
+  const positive = await (await a.get('/inventory')).text();
+  assert.match(positive, /MIN-CERO/);
+  assert.equal([...positive.matchAll(/badge-low/g)].length, 2);
 });
 
 test('an existing database is upgraded with the archived column and keeps its articles', async (t) => {
