@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createInventoryServer } from '../src/server.mjs';
+import { openDatabase } from '../src/database.mjs';
 
 async function app(t) {
   const directory = await mkdtemp(join(tmpdir(), 'inventory-catalog-'));
@@ -140,3 +142,38 @@ test('archiving requires gestión, a valid CSRF token and an existing article', 
   assert.doesNotMatch(viewerPage, /Archivar|Desarchivar|Ajustar existencias/);
   assert.match(viewerPage, /JUNTA/);
 });
+
+test('an existing database is upgraded with the archived column and keeps its articles', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'inventory-migration-'));
+  const databasePath = join(directory, 'inventory.sqlite');
+
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE products (
+      id INTEGER PRIMARY KEY,
+      part_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      description TEXT NOT NULL,
+      presentation TEXT NOT NULL CHECK (presentation IN ('SET', 'KIT', 'unidad')),
+      brand TEXT,
+      location TEXT,
+      minimum_stock INTEGER CHECK (minimum_stock IS NULL OR minimum_stock >= 0),
+      quantity INTEGER NOT NULL DEFAULT 0,
+      stock_version INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO products (part_number, description, presentation) VALUES ('LEGACY-1', 'Repuesto existente', 'KIT');
+  `);
+  legacy.close();
+
+  const upgraded = openDatabase(databasePath);
+  t.after(async () => {
+    upgraded.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const columns = upgraded.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
+  assert.ok(columns.includes('archived'), 'archived column added');
+  const product = upgraded.prepare("SELECT part_number, archived FROM products WHERE part_number = 'LEGACY-1'").get();
+  assert.equal(product.archived, 0);
+});
+

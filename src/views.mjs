@@ -1,5 +1,5 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
-import { PRESENTATIONS as presentationValues } from './products.mjs';
+import { PRESENTATIONS as presentationValues, stockStatus } from './products.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, value]);
 
@@ -100,11 +100,6 @@ export function inventoryPage({ products, filters = {}, ...session }) {
   const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.outOfStock || filters.lowStock);
   const csrfToken = session.csrfToken;
 
-  const statusOf = (product) => {
-    if (product.quantity === 0) return 'agotado';
-    if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';
-    return null;
-  };
   const badgeOf = (status) => status === 'agotado'
     ? '<span class="badge badge-out">Agotado</span>'
     : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
@@ -127,7 +122,7 @@ export function inventoryPage({ products, filters = {}, ...session }) {
   };
 
   const rows = products.map((product) => {
-    const status = statusOf(product);
+    const status = stockStatus(product);
     return `<tr>
       ${archivedView ? '' : `<td><input type="checkbox" name="id" value="${product.id}" form="export-selection" aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>`}
       <td class="part-number">${partNumberCell(product)}</td>
