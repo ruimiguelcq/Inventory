@@ -20,7 +20,7 @@ import {
 } from './database.mjs';
 import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, renderPresentations, setupPage } from './views.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
-import { reviewStock, saveStock, stockHistory } from './stock.mjs';
+import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage } from './views.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -367,7 +367,8 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
               saveStock(database, session.userId, review.change);
               return redirect(response, `/products/${product.id}/history`);
             } catch (error) {
-              return sendHtml(response, stockPage({ ...session, product: findProduct(database, product.id), values: Object.fromEntries(form), error: error.message }), error.status ?? 400);
+              if (!(error instanceof StockError)) throw error;
+              return sendHtml(response, stockPage({ ...session, product: findProduct(database, product.id), values: Object.fromEntries(form), error: error.message }), error.status);
             }
           }
         }
