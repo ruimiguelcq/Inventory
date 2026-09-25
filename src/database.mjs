@@ -38,10 +38,23 @@ export function hasAdministrator(database) {
 }
 
 export function createAdministrator(database, { username, passwordSalt, passwordHash }) {
-  return database.prepare(`
-    INSERT INTO users (username, password_salt, password_hash, role)
-    VALUES (?, ?, ?, 'admin')
-  `).run(username, passwordSalt, passwordHash);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    if (hasAdministrator(database)) {
+      const error = new Error('Initial administrator has already been configured.');
+      error.code = 'INITIAL_ACCESS_ALREADY_CONFIGURED';
+      throw error;
+    }
+    const result = database.prepare(`
+      INSERT INTO users (username, password_salt, password_hash, role)
+      VALUES (?, ?, ?, 'admin')
+    `).run(username, passwordSalt, passwordHash);
+    database.exec('COMMIT');
+    return result;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function findUserByUsername(database, username) {

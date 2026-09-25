@@ -9,14 +9,9 @@ let temporaryDirectory;
 let server;
 let baseUrl;
 let administratorCookie;
+let administratorUsername;
 
-async function getCsrfToken(path = '/inventory') {
-  const page = await fetch(`${baseUrl}${path}`, { headers: { cookie: administratorCookie } });
-  const html = await page.text();
-  return html.match(/name="csrfToken" value="([^"]+)"/)[1];
-}
-
-async function getCsrfTokenWith(cookie, path = '/inventory') {
+async function getCsrfToken(cookie = administratorCookie, path = '/inventory') {
   const page = await fetch(`${baseUrl}${path}`, { headers: { cookie } });
   const html = await page.text();
   return html.match(/name="csrfToken" value="([^"]+)"/)[1];
@@ -47,12 +42,21 @@ test('the administrator can set up access and create a repuesto visible in the i
   });
   assert.equal(unverifiedSetup.status, 403);
 
-  const setupResponse = await fetch(`${baseUrl}/setup`, {
-    method: 'POST',
-    redirect: 'manual',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ setupToken, username: 'admin', password: 'marina-segura-123' }),
-  });
+  const setupAttempts = await Promise.all(['admin', 'admin-alternate'].map(async (username) => ({
+    username,
+    response: await fetch(`${baseUrl}/setup`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ setupToken, username, password: 'marina-segura-123' }),
+    }),
+  })));
+  const successfulSetup = setupAttempts.find(({ response }) => response.status === 303);
+  const rejectedSetup = setupAttempts.find(({ response }) => response.status === 409);
+  assert.ok(successfulSetup);
+  assert.ok(rejectedSetup);
+  administratorUsername = successfulSetup.username;
+  const setupResponse = successfulSetup.response;
   assert.equal(setupResponse.status, 303);
   const setCookie = setupResponse.headers.get('set-cookie');
   assert.match(setCookie, /HttpOnly/);
@@ -87,6 +91,7 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /SET/);
   assert.match(savedHtml, /Marina Parts/);
   assert.match(savedHtml, /Estante B · caja 4/);
+  assert.match(savedHtml, /<td class="quantity-cell">2<\/td>/);
 });
 
 test('a duplicate P/N is rejected without changing the saved repuesto', async () => {
@@ -150,7 +155,7 @@ test('unauthenticated visitors are redirected and the administrator can sign in 
   const invalidLogin = await fetch(`${baseUrl}/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ username: 'admin', password: 'incorrecta' }),
+    body: new URLSearchParams({ username: administratorUsername, password: 'incorrecta' }),
   });
   assert.equal(invalidLogin.status, 401);
   assert.match(await invalidLogin.text(), /Usuario o contraseña incorrectos/);
@@ -159,14 +164,14 @@ test('unauthenticated visitors are redirected and the administrator can sign in 
     method: 'POST',
     redirect: 'manual',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ username: 'ADMIN', password: 'marina-segura-123' }),
+    body: new URLSearchParams({ username: administratorUsername.toUpperCase(), password: 'marina-segura-123' }),
   });
   assert.equal(validLogin.status, 303);
   const sessionCookie = validLogin.headers.get('set-cookie').split(';')[0];
   const inventoryResponse = await fetch(`${baseUrl}/inventory`, { headers: { cookie: sessionCookie } });
   assert.match(await inventoryResponse.text(), /Conchas de biela originales/);
 
-  const csrfToken = await getCsrfTokenWith(sessionCookie);
+  const csrfToken = await getCsrfToken(sessionCookie);
   const logout = await fetch(`${baseUrl}/logout`, {
     method: 'POST',
     redirect: 'manual',

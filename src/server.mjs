@@ -216,6 +216,9 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         try {
           createAdministrator(database, { username, passwordSalt, passwordHash });
         } catch (error) {
+          if (error.code === 'INITIAL_ACCESS_ALREADY_CONFIGURED') {
+            return sendHtml(response, loginPage({ error: 'El acceso inicial ya se configuró. Inicia sesión.' }), 409);
+          }
           if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: users\.username/i.test(error.message)) {
             return sendHtml(response, setupPage({ error: 'Ese usuario ya existe. Elige otro.', setupToken: initialSetupToken }), 409);
           }

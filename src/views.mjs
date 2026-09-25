@@ -1,7 +1,7 @@
 const PRESENTATIONS = [
-  ['SET', 'Set'],
-  ['KIT', 'Kit'],
-  ['unidad', 'Unidad'],
+  ['SET', 'SET'],
+  ['KIT', 'KIT'],
+  ['unidad', 'unidad'],
 ];
 
 export function escapeHtml(value = '') {
@@ -102,6 +102,7 @@ export function inventoryPage({ products, username, csrfToken, message = '' }) {
       <td><span class="presentation-tag">${escapeHtml(product.presentation)}</span></td>
       <td>${product.brand ? escapeHtml(product.brand) : '<span class="muted">—</span>'}</td>
       <td>${product.location ? escapeHtml(product.location) : '<span class="muted">—</span>'}</td>
+      <td class="quantity-cell">${product.minimum_stock ?? '<span class="muted">—</span>'}</td>
       <td class="quantity-cell">${product.available_quantity}</td>
       <td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>
     </tr>`).join('');
@@ -132,6 +133,7 @@ export function inventoryPage({ products, username, csrfToken, message = '' }) {
               <th scope="col">Presentación</th>
               <th scope="col">Marca</th>
               <th scope="col">Ubicación</th>
+              <th scope="col" class="align-right">Mínimo</th>
               <th scope="col" class="align-right">Disponible</th>
               <th scope="col"><span class="visually-hidden">Acciones</span></th>
             </tr></thead>
