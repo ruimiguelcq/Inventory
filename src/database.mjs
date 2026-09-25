@@ -64,6 +64,24 @@ export function findUserByUsername(database, username) {
   `).get(username);
 }
 
+export function findUser(database, id) {
+  return database.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id);
+}
+
+export function listUsers(database) {
+  return database.prepare('SELECT id, username, role FROM users ORDER BY username COLLATE NOCASE').all();
+}
+
+export function insertUser(database, { username, passwordSalt, passwordHash, role }) {
+  return database.prepare(`
+    INSERT INTO users (username, password_salt, password_hash, role) VALUES (?, ?, ?, ?)
+  `).run(username, passwordSalt, passwordHash, role);
+}
+
+export function updateUserRole(database, id, role) {
+  return database.prepare("UPDATE users SET role = ? WHERE id = ? AND role != 'admin'").run(role, id);
+}
+
 export function findProduct(database, id) {
   return database.prepare('SELECT * FROM products WHERE id = ?').get(id);
 }

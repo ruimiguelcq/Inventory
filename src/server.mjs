@@ -6,15 +6,20 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   createAdministrator,
+  findUser,
   findProduct,
   findUserByUsername,
   hasAdministrator,
   insertProduct,
+  insertUser,
   listProducts,
+  listUsers,
   openDatabase,
   updateProduct,
+  updateUserRole,
 } from './database.mjs';
-import { escapeHtml, inventoryPage, loginPage, notFoundPage, productFormPage, renderPresentations, setupPage } from './views.mjs';
+import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, renderPresentations, setupPage } from './views.mjs';
+import { canManageInventory, isAssignableRole } from './permissions.mjs';
 
 const scrypt = promisify(scryptCallback);
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
@@ -99,9 +104,8 @@ function productFrom(form, previous = {}) {
 
 function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400 } = {}) {
   return sendHtml(response, productFormPage({
+    ...session,
     product: productFrom(form, previousProduct),
-    username: session.username,
-    csrfToken: session.csrfToken,
     isNew,
     error: message,
   }), status);
@@ -112,6 +116,9 @@ function isUniqueViolation(error) {
 }
 
 function saveProduct(database, response, { form, session, product, isNew, existingProduct }) {
+  // A role may change while the request body is arriving. Check again at the write boundary.
+  const user = findUser(database, session.userId);
+  if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
   try {
     if (isNew) insertProduct(database, product);
     else updateProduct(database, existingProduct.id, product);
@@ -144,7 +151,7 @@ function startSession(response, sessions, user) {
   });
 }
 
-function sessionFor(request, sessions) {
+function sessionFor(request, sessions, database) {
   const id = readCookies(request.headers.cookie).inventory_session;
   const session = id ? sessions.get(id) : null;
   if (!session) return null;
@@ -152,7 +159,9 @@ function sessionFor(request, sessions) {
     sessions.delete(id);
     return null;
   }
-  return { id, ...session };
+  const user = findUser(database, session.userId);
+  if (!user) return null;
+  return { id, ...session, username: user.username, role: user.role };
 }
 
 function authenticatedPage(response, content) {
@@ -167,6 +176,18 @@ function matchesToken(submitted, expected) {
   return submitted.length === expected.length && timingSafeEqual(Buffer.from(submitted), Buffer.from(expected));
 }
 
+function validateCredentials(username, password) {
+  if (!/^[\p{L}\p{N}_.-]{3,50}$/u.test(username)) return 'El usuario debe tener entre 3 y 50 letras, números, puntos, guiones o guiones bajos.';
+  if (password.length < PASSWORD_MIN_LENGTH) return 'La contraseña debe tener al menos 12 caracteres.';
+  return '';
+}
+
+async function hashPassword(password) {
+  const passwordSalt = randomBytes(16).toString('hex');
+  const passwordHash = (await scrypt(password, passwordSalt, 64)).toString('hex');
+  return { passwordSalt, passwordHash };
+}
+
 export function createInventoryServer({ databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite' } = {}) {
   const database = openDatabase(databasePath);
   const sessions = new Map();
@@ -174,7 +195,7 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
-    const session = sessionFor(request, sessions);
+    const session = sessionFor(request, sessions, database);
 
     try {
       if (request.method === 'GET' && url.pathname === '/assets/style.css') {
@@ -204,14 +225,9 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         }
         const username = (form.get('username') ?? '').trim();
         const password = form.get('password') ?? '';
-        if (!/^[\p{L}\p{N}_.-]{3,50}$/u.test(username)) {
-          return sendHtml(response, setupPage({ error: 'El usuario debe tener entre 3 y 50 letras, números, puntos, guiones o guiones bajos.', setupToken: initialSetupToken }), 400);
-        }
-        if (password.length < PASSWORD_MIN_LENGTH) {
-          return sendHtml(response, setupPage({ error: 'La contraseña debe tener al menos 12 caracteres.', setupToken: initialSetupToken }), 400);
-        }
-        const passwordSalt = randomBytes(16).toString('hex');
-        const passwordHash = (await scrypt(password, passwordSalt, 64)).toString('hex');
+        const credentialError = validateCredentials(username, password);
+        if (credentialError) return sendHtml(response, setupPage({ error: credentialError, setupToken: initialSetupToken }), 400);
+        const { passwordSalt, passwordHash } = await hashPassword(password);
         try {
           createAdministrator(database, { username, passwordSalt, passwordHash });
         } catch (error) {
@@ -255,25 +271,68 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         });
       }
 
-      if (!session && (url.pathname === '/inventory' || url.pathname.startsWith('/products'))) {
+      if (!session) {
         return redirect(response, hasAdministrator(database) ? '/login' : '/setup');
+      }
+
+      // Every private mutation requires gestión, including future stock/archive routes.
+      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname))) {
+        return sendHtml(response, forbiddenPage(session), 403);
+      }
+
+      if (url.pathname.startsWith('/users')) {
+        if (session.role !== 'admin') return sendHtml(response, forbiddenPage(session), 403);
+        const roleMatch = url.pathname.match(/^\/users\/(\d+)\/role$/);
+        if (request.method === 'POST' && roleMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const role = form.get('role');
+          const fail = (error, status = 400) => sendHtml(response, accountsPage({ ...session, users: listUsers(database), error }), status);
+          if (!isAssignableRole(role)) return fail('Elige un permiso válido: Consulta o Gestión.');
+          const user = findUser(database, Number(roleMatch[1]));
+          if (!user) return fail('No encontramos esa cuenta.', 404);
+          if (user.role === 'admin') return fail('El permiso de la cuenta administradora no se puede cambiar.', 403);
+          updateUserRole(database, user.id, role);
+          return redirect(response, '/users?saved=1');
+        }
+        if (request.method === 'GET' && url.pathname === '/users') {
+          return sendHtml(response, accountsPage({ ...session, users: listUsers(database), message: url.searchParams.get('saved') === '1' ? 'Cuenta guardada.' : '' }));
+        }
+        if (request.method === 'POST' && url.pathname === '/users') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const username = (form.get('username') ?? '').trim();
+          const password = form.get('password') ?? '';
+          const role = form.get('role') ?? '';
+          const fail = (error, status = 400) => sendHtml(response, accountsPage({ ...session, users: listUsers(database), account: { username, role }, error }), status);
+          const credentialError = validateCredentials(username, password);
+          if (credentialError) return fail(credentialError);
+          if (!isAssignableRole(role)) return fail('Elige un permiso válido: Consulta o Gestión.');
+          const { passwordSalt, passwordHash } = await hashPassword(password);
+          try {
+            insertUser(database, { username, passwordSalt, passwordHash, role });
+          } catch (error) {
+            if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: users\.username/i.test(error.message)) return fail('Ese usuario ya existe. Elige otro.', 409);
+            throw error;
+          }
+          return redirect(response, '/users?saved=1');
+        }
       }
 
       if (request.method === 'GET' && url.pathname === '/inventory') {
         const message = url.searchParams.get('saved') === '1' ? 'Repuesto guardado.' : '';
         return authenticatedPage(response, inventoryPage({
+          ...session,
           products: listProducts(database),
-          username: session.username,
-          csrfToken: session.csrfToken,
           message,
         }));
       }
 
       if (request.method === 'GET' && url.pathname === '/products/new') {
-        return authenticatedPage(response, productFormPage({ username: session.username, csrfToken: session.csrfToken }));
+        return authenticatedPage(response, productFormPage(session));
       }
 
-        if (request.method === 'POST' && url.pathname === '/products') {
+      if (request.method === 'POST' && url.pathname === '/products') {
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const { error, product } = validateProduct(form);
@@ -284,8 +343,8 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
       const editMatch = url.pathname.match(/^\/products\/(\d+)\/edit$/);
       if (request.method === 'GET' && editMatch) {
         const product = findProduct(database, Number(editMatch[1]));
-        if (!product) return sendHtml(response, notFoundPage({ username: session.username, csrfToken: session.csrfToken }), 404);
-        return authenticatedPage(response, productFormPage({ product, username: session.username, csrfToken: session.csrfToken, isNew: false }));
+        if (!product) return sendHtml(response, notFoundPage(session), 404);
+        return authenticatedPage(response, productFormPage({ ...session, product, isNew: false }));
       }
 
       const updateMatch = url.pathname.match(/^\/products\/(\d+)$/);
@@ -294,16 +353,16 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const id = Number(updateMatch[1]);
         const existingProduct = findProduct(database, id);
-        if (!existingProduct) return sendHtml(response, notFoundPage({ username: session.username, csrfToken: session.csrfToken }), 404);
+        if (!existingProduct) return sendHtml(response, notFoundPage(session), 404);
         const { error, product } = validateProduct(form);
         if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct });
         return saveProduct(database, response, { form, session, product, isNew: false, existingProduct });
       }
 
-      return sendHtml(response, session ? notFoundPage({ username: session.username, csrfToken: session.csrfToken }) : loginPage(), 404);
+      return sendHtml(response, notFoundPage(session), 404);
     } catch (error) {
       const message = error.message === 'El formulario supera el tamaño permitido.' ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
-      sendHtml(response, session ? inventoryPage({ products: listProducts(database), username: session.username, csrfToken: session.csrfToken, message }) : loginPage({ error: message }), 400);
+      sendHtml(response, session ? inventoryPage({ ...session, products: listProducts(database), message }) : loginPage({ error: message }), 400);
     }
   });
 

@@ -1,3 +1,5 @@
+import { assignableRoles, canManageInventory } from './permissions.mjs';
+
 const PRESENTATIONS = [
   ['SET', 'SET'],
   ['KIT', 'KIT'],
@@ -14,7 +16,7 @@ export function escapeHtml(value = '') {
   })[character]);
 }
 
-function page(title, content, { active = 'inventory', username, csrfToken, message } = {}) {
+function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
   const navigation = username ? `
     <header class="topbar">
       <a class="brand" href="/inventory" aria-label="Taller Marino, inventario">
@@ -23,6 +25,7 @@ function page(title, content, { active = 'inventory', username, csrfToken, messa
       </a>
       <nav aria-label="Navegación principal">
         <a class="nav-link ${active === 'inventory' ? 'is-active' : ''}" href="/inventory">Inventario</a>
+        ${role === 'admin' ? `<a class="nav-link ${active === 'users' ? 'is-active' : ''}" href="/users">Cuentas y permisos</a>` : ''}
       </nav>
       <div class="account-area">
         <span class="account-name">${escapeHtml(username)}</span>
@@ -94,16 +97,17 @@ export function loginPage({ error = '' } = {}) {
     </section>`);
 }
 
-export function inventoryPage({ products, username, csrfToken, message = '' }) {
+export function inventoryPage({ products, ...session }) {
+  const canManage = canManageInventory(session.role);
   const rows = products.map((product) => `
     <tr>
-      <td class="part-number"><a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a></td>
+      <td class="part-number">${canManage ? `<a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a>` : escapeHtml(product.part_number)}</td>
       <td><span class="product-description">${escapeHtml(product.description)}</span></td>
       <td><span class="presentation-tag">${escapeHtml(product.presentation)}</span></td>
       <td>${product.brand ? escapeHtml(product.brand) : '<span class="muted">—</span>'}</td>
       <td>${product.location ? escapeHtml(product.location) : '<span class="muted">—</span>'}</td>
       <td class="quantity-cell">${product.minimum_stock ?? '<span class="muted">—</span>'}</td>
-      <td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>
+      ${canManage ? `<td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>` : ''}
     </tr>`).join('');
 
   const content = `
@@ -113,7 +117,7 @@ export function inventoryPage({ products, username, csrfToken, message = '' }) {
         <h1>Inventario de repuestos</h1>
         <p class="page-subtitle">Consulta y mantén las piezas de tu almacén.</p>
       </div>
-      <a class="button button-primary" href="/products/new">Añadir repuesto</a>
+      ${canManage ? '<a class="button button-primary" href="/products/new">Añadir repuesto</a>' : ''}
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
@@ -133,7 +137,7 @@ export function inventoryPage({ products, username, csrfToken, message = '' }) {
               <th scope="col">Marca</th>
               <th scope="col">Ubicación</th>
               <th scope="col" class="align-right">Mínimo</th>
-              <th scope="col"><span class="visually-hidden">Acciones</span></th>
+              ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>
@@ -141,14 +145,61 @@ export function inventoryPage({ products, username, csrfToken, message = '' }) {
         <div class="empty-state">
           <span class="empty-icon" aria-hidden="true">⌁</span>
           <h3>Tu inventario está listo para empezar</h3>
-          <p>Añade el primer repuesto con su P/N y presentación.</p>
-          <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>
+          ${canManage ? `<p>Añade el primer repuesto con su P/N y presentación.</p>
+          <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>` : '<p>Todavía no hay repuestos registrados.</p>'}
         </div>`}
     </section>`;
-  return page('Inventario', content, { username, csrfToken, message });
+  return page('Inventario', content, session);
 }
 
-export function productFormPage({ product = {}, username, csrfToken, error = '', isNew = true }) {
+function roleOptions(selectedRole = 'viewer') {
+  return assignableRoles.map(([value, label]) => `<option value="${value}" ${selectedRole === value ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+export function accountsPage({ users, account = {}, error = '', ...session }) {
+  return page('Cuentas y permisos', `
+    <div class="page-heading"><div><p class="eyebrow">Equipo</p><h1>Cuentas y permisos</h1>
+      <p class="page-subtitle">Consulta permite ver el inventario. Gestión permite mantener artículos y existencias.</p></div></div>
+    <section class="inventory-panel" aria-label="Cuentas del equipo">
+      <table><thead><tr><th scope="col">Usuario</th><th scope="col">Permiso</th></tr></thead>
+        <tbody>${users.map((user) => `<tr><td>${escapeHtml(user.username)}</td><td>${user.role === 'admin' ? 'Administración' : `
+          <form method="post" action="/users/${user.id}/role">
+            <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+            <label class="visually-hidden" for="role-${user.id}">Permiso de ${escapeHtml(user.username)}</label>
+            <select id="role-${user.id}" name="role">
+              ${roleOptions(user.role)}
+            </select>
+            <button class="button button-secondary" type="submit" aria-label="Guardar permiso de ${escapeHtml(user.username)}">Guardar permiso</button>
+          </form>`}</td></tr>`).join('')}</tbody>
+      </table>
+    </section>
+    <form class="product-form" method="post" action="/users">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      <section class="form-section"><h2>Crear cuenta</h2>
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+        <div class="form-grid">
+          <div class="field"><label for="username">Usuario</label>
+            <input id="username" name="username" value="${escapeHtml(account.username ?? '')}" autocomplete="off" minlength="3" maxlength="50" required></div>
+          <div class="field"><label for="password">Contraseña</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+            <p class="form-hint">Al menos 12 caracteres.</p></div>
+          <div class="field"><label for="role">Permiso</label>
+            <select id="role" name="role" required>
+              ${roleOptions(account.role)}
+            </select></div>
+        </div>
+      </section>
+      <div class="form-actions"><button class="button button-primary" type="submit">Crear cuenta</button></div>
+    </form>`, { ...session, active: 'users' });
+}
+
+export function forbiddenPage(session) {
+  return page('Acceso denegado', `<section class="empty-state"><h1>Acceso denegado</h1>
+    <p>No tienes permiso para realizar esta operación.</p>
+    <a class="button button-secondary" href="/inventory">Volver al inventario</a></section>`, session);
+}
+
+export function productFormPage({ product = {}, error = '', isNew = true, ...session }) {
   const presentationOptions = `
     <option value="" disabled ${product.presentation ? '' : 'selected'}>Selecciona una presentación</option>
     ${PRESENTATIONS.map(([value, label]) => `<option value="${value}" ${product.presentation === value ? 'selected' : ''}>${label}</option>`).join('')}
@@ -161,7 +212,7 @@ export function productFormPage({ product = {}, username, csrfToken, error = '',
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
     </div>
     <form class="product-form" method="post" action="${action}">
-      <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
       <section class="form-section">
         <h2>Identificación</h2>
@@ -204,17 +255,17 @@ export function productFormPage({ product = {}, username, csrfToken, error = '',
         <button class="button button-primary" type="submit">Guardar repuesto</button>
       </div>
     </form>`;
-  return page(title, content, { active: 'inventory', username, csrfToken });
+  return page(title, content, { ...session, active: 'inventory' });
 }
 
-export function notFoundPage({ username, csrfToken } = {}) {
+export function notFoundPage(session = {}) {
   return page('No encontrado', `
     <section class="empty-state not-found">
       <p class="eyebrow">404</p>
       <h1>No encontramos ese repuesto</h1>
       <p>Puede que el enlace ya no exista o que el artículo se haya eliminado.</p>
       <a class="button button-secondary" href="/inventory">Volver al inventario</a>
-    </section>`, { username, csrfToken });
+    </section>`, session);
 }
 
 export function renderPresentations() {
