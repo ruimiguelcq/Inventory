@@ -98,6 +98,7 @@ export function inventoryPage({ products, ...session }) {
   const canManage = canManageInventory(session.role);
   const rows = products.map((product) => `
     <tr>
+      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
       <td class="part-number">${canManage ? `<a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a>` : escapeHtml(product.part_number)}</td>
       <td><span class="product-description">${escapeHtml(product.description)}</span></td>
       <td><span class="presentation-tag">${escapeHtml(product.presentation)}</span></td>
@@ -116,7 +117,10 @@ export function inventoryPage({ products, ...session }) {
         <h1>Inventario de repuestos</h1>
         <p class="page-subtitle">Consulta y mantén las piezas de tu almacén.</p>
       </div>
-      ${canManage ? '<div class="form-actions"><a class="button button-secondary" href="/imports">Importar Excel</a><a class="button button-primary" href="/products/new">Añadir repuesto</a></div>' : ''}
+      <div class="form-actions">
+        <a class="button button-secondary" href="/exports?scope=all">Exportar todo a Excel</a>
+        ${canManage ? '<a class="button button-secondary" href="/imports">Importar Excel</a><a class="button button-primary" href="/products/new">Añadir repuesto</a>' : ''}
+      </div>
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
@@ -124,12 +128,18 @@ export function inventoryPage({ products, ...session }) {
           <h2>Todos los repuestos</h2>
           <p>${products.length} ${products.length === 1 ? 'artículo' : 'artículos'}</p>
         </div>
-        <span class="toolbar-note">V1 · Inventario interno</span>
+        <form id="export-selection" method="post" action="/exports">
+          <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+          <input type="hidden" name="scope" value="selected">
+          <button class="button button-secondary" type="submit" ${products.length ? '' : 'disabled'}>Exportar selección a Excel</button>
+        </form>
       </div>
+      <p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>
       ${products.length ? `
         <div class="table-scroll">
           <table>
             <thead><tr>
+              <th scope="col">Seleccionar</th>
               <th scope="col">P/N</th>
               <th scope="col">Repuesto</th>
               <th scope="col">Presentación</th>

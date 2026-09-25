@@ -21,6 +21,7 @@ import {
 import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { validateProduct } from './products.mjs';
 import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
+import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage } from './views.mjs';
@@ -39,11 +40,11 @@ function readCookies(header = '') {
   }));
 }
 
-async function readForm(request) {
+async function readForm(request, maxLength = 16_384) {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (body.length > 16_384) throw new Error('El formulario supera el tamaño permitido.');
+    if (body.length > maxLength) throw new Error('El formulario supera el tamaño permitido.');
   }
   return new URLSearchParams(body);
 }
@@ -249,6 +250,28 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
 
       if (!session) {
         return redirect(response, hasAdministrator(database) ? '/login' : '/setup');
+      }
+
+      // Export is read-only for every authenticated role; POST keeps large selections out of the URL.
+      if (['GET', 'POST'].includes(request.method) && url.pathname === '/exports') {
+        const params = request.method === 'POST' ? await readForm(request, 2 * 1024 * 1024) : url.searchParams;
+        if (request.method === 'POST' && !validateCsrf(params, session)) return sendHtml(response, forbiddenPage(session), 403);
+        const products = listProducts(database);
+        let selected;
+        try {
+          selected = selectExportProducts(products, params);
+        } catch (error) {
+          if (!(error instanceof ExportError)) throw error;
+          return sendHtml(response, inventoryPage({ ...session, products, message: error.message }), 400);
+        }
+        const buffer = await exportInventory(selected);
+        response.writeHead(200, {
+          'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'content-disposition': 'attachment; filename="inventario.xlsx"',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        });
+        return response.end(buffer);
       }
 
       // Every private mutation requires gestión, including future stock/archive routes.

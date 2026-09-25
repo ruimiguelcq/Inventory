@@ -61,6 +61,17 @@ Desde **Inventario → Importar Excel**, Gestión y Administración pueden carga
 
 La dependencia ExcelJS usa una sustitución de `uuid` por su versión 11 corregida, compatible con la API `v4` que utiliza.
 
+## Exportar a Excel
+
+Desde **Inventario**, cualquier miembro del equipo con sesión iniciada (Consulta, Gestión o Administración) puede descargar:
+
+- **Exportar todo a Excel:** todos los artículos del inventario.
+- **Exportar selección a Excel:** solo los artículos marcados en las casillas de la tabla. Una selección vacía o inválida muestra un mensaje y no descarga el inventario completo.
+
+El archivo `inventario.xlsx` contiene una hoja con P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock y Cantidad. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.
+
+Puedes cargar el archivo en **Importar Excel** para revisar los cambios antes de confirmarlos. Para recuperar las cantidades exportadas, activa **Importar existencias** y elige **Establecer en**; **Ajustar por** sumaría las cantidades al stock actual. Se aplican los límites de importación de 2 MB y 1000 filas por archivo; para inventarios mayores, prepara lotes dentro de esos límites conservando los encabezados. Un inventario vacío genera solo los encabezados.
+
 ## Probar
 
 ```powershell

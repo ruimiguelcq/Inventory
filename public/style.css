@@ -173,6 +173,7 @@ button, input, select { font: inherit; }
 .table-toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .toolbar-note { color: var(--muted); font-size: 12px; }
 .table-scroll { overflow-x: auto; }
+.export-hint { margin: 12px 19px; color: var(--muted); font-size: 12px; }
 
 table { width: 100%; border-collapse: collapse; text-align: left; }
 th, td { padding: 13px 15px; border-bottom: 1px solid #e8edef; vertical-align: middle; }
