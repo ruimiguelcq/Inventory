@@ -94,21 +94,109 @@ export function loginPage({ error = '' } = {}) {
     </section>`);
 }
 
-export function inventoryPage({ products, ...session }) {
+export function inventoryPage({ products, filters = {}, ...session }) {
   const canManage = canManageInventory(session.role);
-  const rows = products.map((product) => `
-    <tr>
-      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
-      <td class="part-number">${canManage ? `<a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a>` : escapeHtml(product.part_number)}</td>
+  const archivedView = Boolean(filters.archived);
+  const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.outOfStock || filters.lowStock);
+  const csrfToken = session.csrfToken;
+
+  const statusOf = (product) => {
+    if (product.quantity === 0) return 'agotado';
+    if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';
+    return null;
+  };
+  const badgeOf = (status) => status === 'agotado'
+    ? '<span class="badge badge-out">Agotado</span>'
+    : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
+
+  const partNumberCell = (product) => (canManage && !archivedView)
+    ? `<a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a>`
+    : escapeHtml(product.part_number);
+
+  const stockActions = (product) => {
+    const history = `<a href="/products/${product.id}/history">Historial</a>`;
+    if (!canManage) return history;
+    if (archivedView) {
+      return `${history} · <form method="post" action="/products/${product.id}/restore" class="inline-form">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+        <button type="submit" class="text-link">Desarchivar</button></form>`;
+    }
+    return `${history} · <a href="/products/${product.id}/stock">Ajustar existencias</a> · <form method="post" action="/products/${product.id}/archive" class="inline-form">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+      <button type="submit" class="text-link">Archivar</button></form>`;
+  };
+
+  const rows = products.map((product) => {
+    const status = statusOf(product);
+    return `<tr>
+      ${archivedView ? '' : `<td><input type="checkbox" name="id" value="${product.id}" form="export-selection" aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>`}
+      <td class="part-number">${partNumberCell(product)}</td>
       <td><span class="product-description">${escapeHtml(product.description)}</span></td>
       <td><span class="presentation-tag">${escapeHtml(product.presentation)}</span></td>
       <td>${product.brand ? escapeHtml(product.brand) : '<span class="muted">—</span>'}</td>
       <td>${product.location ? escapeHtml(product.location) : '<span class="muted">—</span>'}</td>
       <td class="quantity-cell">${product.minimum_stock ?? '<span class="muted">—</span>'}</td>
-      <td class="quantity-cell">${product.quantity}</td>
-      <td><a href="/products/${product.id}/history">Historial</a>${canManage ? ` · <a href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}</td>
-      ${canManage ? `<td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>` : ''}
-    </tr>`).join('');
+      <td class="quantity-cell">${product.quantity}${status ? ` ${badgeOf(status)}` : ''}</td>
+      <td>${stockActions(product)}</td>
+      ${canManage && !archivedView ? `<td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>` : ''}
+    </tr>`;
+  }).join('');
+
+  const header = archivedView ? `
+    <thead><tr>
+      <th scope="col">P/N</th>
+      <th scope="col">Repuesto</th>
+      <th scope="col">Presentación</th>
+      <th scope="col">Marca</th>
+      <th scope="col">Ubicación</th>
+      <th scope="col" class="align-right">Mínimo</th>
+      <th scope="col" class="align-right">Disponible</th>
+      <th scope="col">Existencias</th>
+    </tr></thead>` : `
+    <thead><tr>
+      <th scope="col">Seleccionar</th>
+      <th scope="col">P/N</th>
+      <th scope="col">Repuesto</th>
+      <th scope="col">Presentación</th>
+      <th scope="col">Marca</th>
+      <th scope="col">Ubicación</th>
+      <th scope="col" class="align-right">Mínimo</th>
+      <th scope="col" class="align-right">Disponible</th>
+      <th scope="col">Existencias</th>
+      ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
+    </tr></thead>`;
+
+  const headingTitle = archivedView ? 'Repuestos archivados' : hasActiveFilter ? 'Resultados' : 'Todos los repuestos';
+
+  const emptyState = archivedView
+    ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>No hay repuestos archivados</h3>
+      <p>Al archivar un repuesto, se retira del inventario activo sin borrar su historial.</p></div>`
+    : hasActiveFilter
+      ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+        <h3>Sin resultados</h3>
+        <p>Ningún repuesto coincide con la búsqueda o los filtros.</p>
+        <a class="button button-secondary" href="/inventory">Limpiar filtros</a></div>`
+      : `<div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">⌁</span>
+          <h3>Tu inventario está listo para empezar</h3>
+          ${canManage ? `<p>Añade el primer repuesto con su P/N y presentación.</p>
+          <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>` : '<p>Todavía no hay repuestos registrados.</p>'}
+        </div>`;
+
+  const filterBar = `
+    <form class="filter-bar" method="get" action="/inventory">
+      <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o descripción" aria-label="Buscar repuestos">
+      <select name="presentation" aria-label="Filtrar por presentación">
+        <option value="">Todas las presentaciones</option>
+        ${PRESENTATIONS.map(([value]) => `<option value="${value}" ${filters.presentation === value ? 'selected' : ''}>${value}</option>`).join('')}
+      </select>
+      <label class="filter-check"><input type="checkbox" name="outOfStock" ${filters.outOfStock ? 'checked' : ''}> Agotados</label>
+      <label class="filter-check"><input type="checkbox" name="lowStock" ${filters.lowStock ? 'checked' : ''}> Stock bajo</label>
+      <label class="filter-check"><input type="checkbox" name="archived" ${filters.archived ? 'checked' : ''}> Archivados</label>
+      <button class="button button-secondary" type="submit">Filtrar</button>
+      ${hasActiveFilter || archivedView ? '<a class="button button-quiet" href="/inventory">Limpiar</a>' : ''}
+    </form>`;
 
   const content = `
     <div class="page-heading">
@@ -125,40 +213,21 @@ export function inventoryPage({ products, ...session }) {
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
         <div>
-          <h2>Todos los repuestos</h2>
+          <h2>${headingTitle}</h2>
           <p>${products.length} ${products.length === 1 ? 'artículo' : 'artículos'}</p>
         </div>
-        <form id="export-selection" method="post" action="/exports">
-          <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        ${archivedView ? '' : `<form id="export-selection" method="post" action="/exports">
+          <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
           <input type="hidden" name="scope" value="selected">
           <button class="button button-secondary" type="submit" ${products.length ? '' : 'disabled'}>Exportar selección a Excel</button>
-        </form>
+        </form>`}
       </div>
-      <p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>
+      ${filterBar}
+      ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
       ${products.length ? `
         <div class="table-scroll">
-          <table>
-            <thead><tr>
-              <th scope="col">Seleccionar</th>
-              <th scope="col">P/N</th>
-              <th scope="col">Repuesto</th>
-              <th scope="col">Presentación</th>
-              <th scope="col">Marca</th>
-              <th scope="col">Ubicación</th>
-              <th scope="col" class="align-right">Mínimo</th>
-              <th scope="col" class="align-right">Disponible</th>
-              <th scope="col">Existencias</th>
-              ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
-            </tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>` : `
-        <div class="empty-state">
-          <span class="empty-icon" aria-hidden="true">⌁</span>
-          <h3>Tu inventario está listo para empezar</h3>
-          ${canManage ? `<p>Añade el primer repuesto con su P/N y presentación.</p>
-          <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>` : '<p>Todavía no hay repuestos registrados.</p>'}
-        </div>`}
+          <table>${header}<tbody>${rows}</tbody></table>
+        </div>` : emptyState}
     </section>`;
   return page('Inventario', content, session);
 }

@@ -27,7 +27,20 @@ Desde **Cuentas y permisos**, la cuenta administradora puede crear usuarios con 
 
 Los permisos se verifican en el servidor y los cambios se aplican en la siguiente petición, incluso en sesiones ya abiertas. Las contraseñas se guardan como hashes con sal; las cuentas y sus permisos se conservan al reiniciar. Las sesiones duran ocho horas y se cierran al reiniciar el servidor.
 
-La protección de operaciones de escritura exige Gestión o Administración. El archivo se implementa en el ticket #5.
+La protección de operaciones de escritura exige Gestión o Administración.
+
+## Buscar, filtrar y archivar
+
+La tabla del inventario ofrece una barra de búsqueda y filtros:
+
+- **Buscar** por P/N o descripción, sin distinguir mayúsculas.
+- **Filtrar por presentación** (SET, KIT o unidad).
+- **Agotados:** artículos con cantidad cero.
+- **Stock bajo:** artículos con mínimo configurado y cantidad menor o igual al mínimo.
+
+Cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
+
+Gestión y Administración pueden **Archivar** un repuesto para retirarlo de la vista activa sin borrar su historial. La opción **Archivados** de la barra de filtros muestra los artículos archivados, desde donde se pueden **Desarchivar**. La vista normal prioriza los artículos activos; no hay borrado definitivo desde la interfaz.
 
 ## Existencias e historial
 

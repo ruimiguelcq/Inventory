@@ -25,6 +25,7 @@ export function openDatabase(databasePath) {
       brand TEXT,
       location TEXT,
       minimum_stock INTEGER CHECK (minimum_stock IS NULL OR minimum_stock >= 0),
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -34,6 +35,9 @@ export function openDatabase(databasePath) {
       ALTER TABLE products ADD COLUMN quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0 AND quantity <= 9007199254740991);
       ALTER TABLE products ADD COLUMN stock_version INTEGER NOT NULL DEFAULT 0;
       COMMIT;`);
+  }
+  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'archived')) {
+    database.exec('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1));');
   }
   database.exec(`
     CREATE TABLE IF NOT EXISTS stock_movements (
@@ -112,7 +116,7 @@ export function findProduct(database, id) {
 
 export function listProducts(database) {
   return database.prepare(`
-    SELECT id, part_number, description, presentation, brand, location, minimum_stock, quantity
+    SELECT id, part_number, description, presentation, brand, location, minimum_stock, quantity, archived
     FROM products
     ORDER BY part_number COLLATE NOCASE
   `).all();
@@ -147,4 +151,10 @@ export function updateProduct(database, id, product) {
     product.minimumStock,
     id,
   );
+}
+
+export function setProductArchived(database, id, archived) {
+  return database.prepare(`
+    UPDATE products SET archived = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(archived ? 1 : 0, id);
 }

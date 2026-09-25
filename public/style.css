@@ -327,6 +327,67 @@ tbody tr:hover { background: #f7fbfa; }
   clip-path: inset(50%);
 }
 
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 19px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfc;
+}
+
+.filter-bar input[type="search"], .filter-bar select {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid #bccbd2;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.filter-bar input[type="search"] { min-width: 230px; }
+
+.filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #314652;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.filter-check input { margin: 0; }
+
+.badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+.badge-out { background: #fff0ed; color: #a13a33; }
+.badge-low { background: #fff4e0; color: #9a6a12; }
+
+.inline-form { display: inline; }
+
+button.text-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #245d68;
+  font-weight: 600;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+button.text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
 @media (max-width: 760px) {
   .topbar { gap: 17px; padding: 0 16px; }
   .account-area { gap: 5px; }

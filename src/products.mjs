@@ -19,3 +19,28 @@ export function validateProduct(form) {
   }
   return { product };
 }
+
+// Cero existencias es "agotado"; con mínimo configurado, cantidad menor o igual al mínimo es "stock bajo".
+export function stockStatus(product) {
+  if (product.quantity === 0) return 'agotado';
+  if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';
+  return null;
+}
+
+// Filtra el listado del inventario a partir de los parámetros de búsqueda de la interfaz.
+export function filterProducts(products, params) {
+  const archived = params.get('archived') === 'on';
+  const query = (params.get('q') ?? '').trim().toLowerCase();
+  const presentation = params.get('presentation') ?? '';
+  const statuses = [];
+  if (params.get('outOfStock') === 'on') statuses.push('agotado');
+  if (params.get('lowStock') === 'on') statuses.push('stockbajo');
+
+  return products.filter((product) => {
+    if (Boolean(product.archived) !== archived) return false;
+    if (query && !product.part_number.toLowerCase().includes(query) && !product.description.toLowerCase().includes(query)) return false;
+    if (presentation && product.presentation !== presentation) return false;
+    if (statuses.length && !statuses.includes(stockStatus(product))) return false;
+    return true;
+  });
+}

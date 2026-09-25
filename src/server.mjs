@@ -15,11 +15,12 @@ import {
   listProducts,
   listUsers,
   openDatabase,
+  setProductArchived,
   updateProduct,
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { validateProduct } from './products.mjs';
+import { filterProducts, validateProduct } from './products.mjs';
 import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
 import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
@@ -319,10 +320,21 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
       }
 
       if (request.method === 'GET' && url.pathname === '/inventory') {
-        const message = url.searchParams.get('imported') === '1' ? 'Importación aplicada.' : url.searchParams.get('saved') === '1' ? 'Repuesto guardado.' : '';
+        const params = url.searchParams;
+        const message = params.get('msg') === 'archived' ? 'Repuesto archivado.'
+          : params.get('msg') === 'restored' ? 'Repuesto restaurado.'
+          : params.get('imported') === '1' ? 'Importación aplicada.'
+          : params.get('saved') === '1' ? 'Repuesto guardado.' : '';
         return authenticatedPage(response, inventoryPage({
           ...session,
-          products: listProducts(database),
+          products: filterProducts(listProducts(database), params),
+          filters: {
+            q: (params.get('q') ?? '').trim(),
+            presentation: params.get('presentation') ?? '',
+            outOfStock: params.get('outOfStock') === 'on',
+            lowStock: params.get('lowStock') === 'on',
+            archived: params.get('archived') === 'on',
+          },
           message,
         }));
       }
@@ -421,6 +433,18 @@ export function createInventoryServer({ databasePath = process.env.DATABASE_PATH
         const { error, product } = validateProduct(form);
         if (error) return sendProductFormError(response, form, session, error);
         return saveProduct(database, response, { form, session, product, isNew: true });
+      }
+
+      const archiveMatch = url.pathname.match(/^\/products\/(\d+)\/(archive|restore)$/);
+      if (request.method === 'POST' && archiveMatch) {
+        if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+        const form = await readForm(request);
+        if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+        const product = findProduct(database, Number(archiveMatch[1]));
+        if (!product) return sendHtml(response, notFoundPage(session), 404);
+        const archiving = archiveMatch[2] === 'archive';
+        setProductArchived(database, product.id, archiving);
+        return redirect(response, archiving ? '/inventory?msg=archived' : '/inventory?msg=restored&archived=on');
       }
 
       const editMatch = url.pathname.match(/^\/products\/(\d+)\/edit$/);
