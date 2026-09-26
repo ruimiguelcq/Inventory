@@ -1,3 +1,8 @@
 data/
 node_modules/
 npm-debug.log*
+
+# Agent tooling (locally installed skills and their lockfile)
+.agents/
+.claude/
+skills-lock.json
