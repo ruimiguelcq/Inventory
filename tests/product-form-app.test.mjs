@@ -42,30 +42,60 @@ async function app(t) {
   return { url, get, post, token, csrfToken, signIn, restart, databasePath, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
 }
 
-test('the product form ships the two-column layout, media box below the description and Estado', async (t) => {
+test('the product form ships the two-column layout, Multimedia, Costo and the inventory card', async (t) => {
   const a = await app(t);
   const form = await (await a.get('/products/new')).text();
-  // Shopify-style split: main column plus a sidebar for Estado and Organización del producto.
+  // Shopify-style split: main column plus a sidebar for Organización del producto.
   assert.match(form, /class="product-layout"/);
   assert.match(form, /class="product-layout__main"/);
   assert.match(form, /class="product-layout__side"/);
   assert.match(form, /Organización del producto/);
-  assert.match(form, /name="state"/);
-  assert.match(form, /<option value="active" selected>Activo<\/option>/);
-  assert.match(form, /<option value="archived"[^>]*>Archivado<\/option>/);
-  // The media box sits between the long description and the category.
+  // Categoría is the first field of the sidebar.
+  assert.ok(form.indexOf('Organización del producto') < form.indexOf('name="categoryId"'), 'categoría dentro de Organización');
+  // Main card: P/N, Presentación, Producto, Descripción and the Multimedia box under it.
+  const partNumber = form.indexOf('name="partNumber"');
   const description = form.indexOf('name="longDescription"');
+  const multimedia = form.indexOf('form-subheading');
   const image = form.indexOf('name="image"');
-  const category = form.indexOf('name="categoryId"');
-  assert.ok(description > -1 && image > description && category > image, 'imagen va tras la descripción');
+  assert.ok(partNumber > -1 && description > partNumber && multimedia > description && image > multimedia, 'multimedia va tras la descripción');
+  assert.match(form, /Multimedia/);
   assert.match(form, /name="image" type="file" accept="image\/jpeg,image\/png,image\/webp"/);
-  assert.match(form, /class="media-box"/);
+  // Precio card holds Precio and the internal Costo; minimum stock and initial quantity are gone.
+  assert.match(form, /<h2>Precio<\/h2>/);
+  assert.match(form, /name="price"/);
+  assert.match(form, /name="cost"/);
+  assert.doesNotMatch(form, /name="minimumStock"/);
+  assert.doesNotMatch(form, /Mínimo de stock|Cantidad inicial/);
+  // Inventory card with an available quantity and the manual location.
+  assert.match(form, /inventory-card/);
+  assert.match(form, /name="initialQuantity"/);
+  assert.match(form, /name="location"/);
+  // Estado is no longer on the form.
+  assert.doesNotMatch(form, /name="state"/);
   // Named lists render as a native select (no-JS fallback) plus a searchable combobox.
   assert.match(form, /data-combo-search/);
   assert.match(form, /placeholder="Buscar categorías"/);
   assert.match(form, /placeholder="Buscar o agregar tipo de producto"/);
   assert.match(form, /placeholder="Buscar o agregar proveedor"/);
   assert.match(form, /data-combo-add/);
+});
+
+test('Precio and Costo are saved and the detail shows the margin', async (t) => {
+  const a = await app(t);
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'C-1', description: 'Con coste', presentation: 'KIT', price: '10.00', cost: '6.50' })).status, 303);
+  const detail = await (await a.get('/products/1')).text();
+  assert.match(detail, /<dt>Precio<\/dt><dd>\$10\.00<\/dd>/);
+  assert.match(detail, /<dt>Costo<\/dt><dd>\$6\.50<\/dd>/);
+  assert.match(detail, /<dt>Ganancia<\/dt><dd>\$3\.50<\/dd>/);
+  // The form reloads both values.
+  const form = await (await a.get('/products/1/edit')).text();
+  assert.match(form, /name="price" inputmode="decimal" value="10\.00"/);
+  assert.match(form, /name="cost" inputmode="decimal" value="6\.50"/);
+  // An invalid cost is rejected with a cost-specific message and keeps the stored value.
+  const invalid = await a.post('/products/1', { csrfToken: a.csrfToken, partNumber: 'C-1', description: 'Con coste', presentation: 'KIT', cost: 'abc' });
+  assert.equal(invalid.status, 400);
+  assert.match(await invalid.text(), /El costo/);
+  assert.match(await (await a.get('/products/1')).text(), /<dt>Costo<\/dt><dd>\$6\.50<\/dd>/);
 });
 
 test('the starter categories ship with the app and are seeded only once across restarts', async (t) => {
@@ -103,18 +133,13 @@ test('only an admin creates categories; managers keep creating types and supplie
   assert.match(await (await a.get('/products/2')).text(), /Categoría<\/dt><dd>Categoría admin/);
 });
 
-test('the Estado field archives and restores an article and defaults to Activo', async (t) => {
+test('the form no longer exposes Estado; archiving stays on the detail page', async (t) => {
   const a = await app(t);
-  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'ACT', description: 'Activo', presentation: 'KIT' })).status, 303);
+  assert.doesNotMatch(await (await a.get('/products/new')).text(), /name="state"/);
   assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'ARC', description: 'Archivado', presentation: 'KIT', state: 'archived' })).status, 303);
-  assert.match(await (await a.get('/products/1')).text(), /Estado<\/dt><dd>Activo/);
-  assert.match(await (await a.get('/products/2')).text(), /Estado<\/dt><dd>Archivado/);
-  // The archived article leaves the active catalog.
+  assert.match(await (await a.get('/products/1')).text(), /Estado<\/dt><dd>Archivado/);
   const active = await (await a.get('/products')).text();
-  assert.match(active, /Activo/);
   assert.doesNotMatch(active, /ARC/);
-  // Editing the form changes the state without touching stock or history.
-  assert.equal((await a.post('/products/2', { csrfToken: a.csrfToken, partNumber: 'ARC', description: 'Archivado', presentation: 'KIT', state: 'active' })).status, 303);
-  assert.match(await (await a.get('/products/2')).text(), /Estado<\/dt><dd>Activo/);
-  assert.match(await (await a.get('/products/2/history')).text(), /Todavía no hay movimientos/);
+  assert.equal((await a.post('/products/1/restore', { csrfToken: a.csrfToken })).status, 303);
+  assert.match(await (await a.get('/products/1')).text(), /Estado<\/dt><dd>Activo/);
 });

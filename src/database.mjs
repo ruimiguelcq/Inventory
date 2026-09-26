@@ -95,6 +95,10 @@ export function openDatabase(databasePath) {
   if (!productColumns().includes('price_cents')) {
     database.exec('ALTER TABLE products ADD COLUMN price_cents INTEGER CHECK (price_cents IS NULL OR price_cents >= 0)');
   }
+  // What the article costs us, kept beside the sale price for margin control.
+  if (!productColumns().includes('cost_cents')) {
+    database.exec('ALTER TABLE products ADD COLUMN cost_cents INTEGER CHECK (cost_cents IS NULL OR cost_cents >= 0)');
+  }
   if (!productColumns().includes('product_type_id')) {
     database.exec('ALTER TABLE products ADD COLUMN product_type_id INTEGER REFERENCES product_types(id)');
   }
@@ -285,13 +289,13 @@ export function updateProduct(database, id, product) {
 
 // Extended fields and named-list references are written in one place, shared by the product
 // form and the Excel import so both preserve or clear them the same way.
-export function setProductClassification(database, id, { longDescription, priceCents, categoryId, productTypeId, supplierId }) {
+export function setProductClassification(database, id, { longDescription, priceCents, costCents, categoryId, productTypeId, supplierId }) {
   return database.prepare(`
     UPDATE products
-    SET long_description = ?, price_cents = ?, category_id = ?, product_type_id = ?, supplier_id = ?,
+    SET long_description = ?, price_cents = ?, cost_cents = ?, category_id = ?, product_type_id = ?, supplier_id = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(longDescription, priceCents, categoryId, productTypeId, supplierId, id);
+  `).run(longDescription, priceCents, costCents, categoryId, productTypeId, supplierId, id);
 }
 
 export function setProductArchived(database, id, archived) {

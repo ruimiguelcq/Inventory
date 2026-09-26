@@ -128,6 +128,7 @@ function productFrom(form, previous = {}) {
     minimum_stock: form.get('minimumStock') ?? '',
     long_description: form.get('longDescription') ?? previous.long_description ?? '',
     price: form.get('price') ?? (previous.price_cents != null ? formatCents(previous.price_cents) : ''),
+    cost: form.get('cost') ?? (previous.cost_cents != null ? formatCents(previous.cost_cents) : ''),
     initial_quantity: form.get('initialQuantity') ?? '',
     category_id: form.get('categoryId') ?? previous.category_id ?? '',
     new_category: form.get('newCategory') ?? '',
@@ -135,7 +136,6 @@ function productFrom(form, previous = {}) {
     new_product_type: form.get('newProductType') ?? '',
     supplier_id: form.get('supplierId') ?? previous.supplier_id ?? '',
     new_supplier: form.get('newSupplier') ?? '',
-    state: form.get('state') ?? (previous.archived ? 'archived' : 'active'),
   };
 }
 

@@ -501,30 +501,55 @@ button.text-link {
 
 button.text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* Two-column product form: main fields plus a sidebar for Estado and Organización. */
+/* Two-column product form: main fields plus a sidebar for Organización del producto. */
 .product-form--split {
-  max-width: 1060px;
+  max-width: 1080px;
   overflow: visible;
   border: 0;
   background: transparent;
   box-shadow: none;
 }
-.product-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.product-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: flex-start; }
 .product-layout__main, .product-layout__side { display: flex; flex-direction: column; gap: 18px; }
 .product-layout .form-section {
+  padding: 22px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--surface);
-  box-shadow: 0 2px 6px rgb(21 47 62 / 4%);
+  box-shadow: 0 1px 3px rgb(21 47 62 / 6%);
 }
-.product-layout__side .form-section { padding: 20px; }
 .product-form--split .form-actions {
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--surface);
-  box-shadow: 0 2px 6px rgb(21 47 62 / 4%);
+  box-shadow: 0 1px 3px rgb(21 47 62 / 6%);
 }
-.media-title { margin: 18px 0 10px; font-size: 14px; font-weight: 650; }
+/* Shopify-like typography: small, airy labels and calmer headings. */
+.product-form--split .form-section h2 { font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+.product-form--split .field { gap: 6px; }
+.product-form--split .field label { font-size: 12px; font-weight: 500; color: #303030; letter-spacing: 0.01em; }
+.product-form--split .field input,
+.product-form--split .field select,
+.product-form--split .field textarea,
+.product-form--split .combo__search,
+.product-form--split .combo__toggle { min-height: 36px; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+.product-form--split .form-hint { margin: 6px 0 0; font-size: 12px; }
+.product-form--split .form-grid { gap: 16px 18px; }
+.form-subheading { margin: 20px 0 10px; font-size: 13px; font-weight: 600; color: #303030; }
+.inventory-card { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+.inventory-card__head {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f8f8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.inventory-card__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 13px; }
+.inventory-card__row input { width: 130px; min-height: 36px; padding: 7px 10px; border: 1px solid #bccbd2; border-radius: 6px; text-align: right; }
+.inventory-card__value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .media-box { display: grid; gap: 12px; }
 .media-box__current { display: flex; flex-direction: column; gap: 10px; }
 .media-box__drop {

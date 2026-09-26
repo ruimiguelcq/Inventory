@@ -28,13 +28,15 @@ export function validateProduct(form) {
   const minimumInput = (form.get('minimumStock') ?? '').trim();
   const longDescriptionInput = form.get('longDescription');
   const priceInput = form.get('price');
+  const costInput = form.get('cost');
   const longDescription = (longDescriptionInput ?? '').trim();
   const initialInput = (form.get('initialQuantity') ?? '').trim();
   const stateInput = form.get('state');
   const product = { partNumber, description, presentation, brand: brand || null,
     location: location || null, minimumStock: minimumInput === '' ? null : Number(minimumInput),
     longDescription: longDescription || null, longDescriptionProvided: longDescriptionInput !== null,
-    priceCents: null, priceProvided: priceInput !== null, initialQuantity: initialInput === '' ? 0 : Number(initialInput),
+    priceCents: null, priceProvided: priceInput !== null, costCents: null, costProvided: costInput !== null,
+    initialQuantity: initialInput === '' ? 0 : Number(initialInput),
     archivedProvided: stateInput !== null && stateInput !== '', archived: stateInput === 'archived' };
   if (!partNumber || partNumber.length > 100) return { error: 'Escribe un P/N de hasta 100 caracteres.', product };
   if (!description || description.length > 240) return { error: 'Escribe un nombre de producto de hasta 240 caracteres.', product };
@@ -48,6 +50,9 @@ export function validateProduct(form) {
   const price = parsePrice(priceInput);
   if (price.error) return { error: price.error, product };
   product.priceCents = price.cents;
+  const cost = parsePrice(costInput);
+  if (cost.error) return { error: cost.error.replace('El precio', 'El costo'), product };
+  product.costCents = cost.cents;
   if (stateInput !== null && stateInput !== '' && !['active', 'archived'].includes(stateInput)) {
     return { error: 'Elige un estado válido: Activo o Archivado.', product };
   }

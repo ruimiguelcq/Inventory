@@ -77,6 +77,7 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
     setProductClassification(database, id, {
       longDescription: product.longDescriptionProvided ? product.longDescription : (existingProduct?.long_description ?? null),
       priceCents: product.priceProvided ? product.priceCents : (existingProduct?.price_cents ?? null),
+      costCents: product.costProvided ? product.costCents : (existingProduct?.cost_cents ?? null),
       categoryId, productTypeId, supplierId,
     });
     const previousImage = existingProduct?.image_filename ?? null;

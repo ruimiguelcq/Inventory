@@ -186,6 +186,8 @@ function classification(database, row) {
   return {
     longDescription: row.product.longDescriptionProvided ? row.product.longDescription : (previous?.long_description ?? null),
     priceCents: row.product.priceProvided ? row.product.priceCents : (previous?.price_cents ?? null),
+    // Excel carries no cost, so importing always keeps the stored one.
+    costCents: previous?.cost_cents ?? null,
     categoryId: namedListId(database, 'category', row.category, previous?.category_id),
     productTypeId: namedListId(database, 'productType', row.productType, previous?.product_type_id),
     supplierId: namedListId(database, 'supplier', row.supplier, previous?.supplier_id),

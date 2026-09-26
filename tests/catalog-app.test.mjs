@@ -228,11 +228,11 @@ test('an existing database is upgraded with the archived column and keeps its ar
   const columns = upgraded.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
   assert.ok(columns.includes('archived'), 'archived column added');
   assert.ok(columns.includes('category_id'), 'category column added');
-  for (const column of ['long_description', 'price_cents', 'product_type_id', 'supplier_id']) {
+  for (const column of ['long_description', 'price_cents', 'cost_cents', 'product_type_id', 'supplier_id']) {
     assert.ok(columns.includes(column), `${column} column added`);
   }
-  const legacyFields = upgraded.prepare("SELECT category_id, long_description, price_cents, product_type_id, supplier_id FROM products WHERE part_number = 'LEGACY-1'").get();
-  for (const field of ['category_id', 'long_description', 'price_cents', 'product_type_id', 'supplier_id']) {
+  const legacyFields = upgraded.prepare("SELECT category_id, long_description, price_cents, cost_cents, product_type_id, supplier_id FROM products WHERE part_number = 'LEGACY-1'").get();
+  for (const field of ['category_id', 'long_description', 'price_cents', 'cost_cents', 'product_type_id', 'supplier_id']) {
     assert.equal(legacyFields[field], null, `${field} defaults to null`);
   }
   const lists = upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('product_types', 'suppliers') ORDER BY name").all();
