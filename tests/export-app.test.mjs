@@ -83,7 +83,7 @@ test('Productos exports the descriptive catalog with its category and inventory 
   const a = await app(t);
   await seed(a);
   const before = await (await a.get('/products')).text();
-  const link = viewLink(before, 'Exportar productos');
+  const link = viewLink(before, 'Exportar');
   assert.match(link, /view=products/);
   const { sheet } = await download(await a.get(link), 'productos.xlsx');
   assert.equal(sheet.rowCount, 4);
@@ -128,7 +128,7 @@ test('both exports cover every filtered page and never fall back to the full cat
   }
   const page = await (await a.get('/products?q=bomba&category=1')).text();
   assert.equal([...page.matchAll(/name="id" value="(\d+)"/g)].length, 50);
-  const allProducts = await download(await a.get(viewLink(page, 'Exportar productos')), 'productos.xlsx');
+  const allProducts = await download(await a.get(viewLink(page, 'Exportar')), 'productos.xlsx');
   assert.equal(allProducts.sheet.rowCount, 56);
   const inventoryPage = await (await a.get('/inventory?q=bomba')).text();
   const allInventory = await download(await a.get(viewLink(inventoryPage, 'Exportar')), 'inventario.xlsx');
@@ -174,10 +174,10 @@ test('consulta exports both views while anonymous visitors cannot download', asy
   const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
   const products = await (await a.get('/products')).text();
   const inventory = await (await a.get('/inventory')).text();
-  assert.match(products, /Exportar productos/);
+  assert.match(products, />Exportar<\/a>/);
   assert.match(inventory, />Exportar<\/a>/);
-  assert.doesNotMatch(products, /Importar productos/);
-  assert.equal((await download(await a.get(viewLink(products, 'Exportar productos')), 'productos.xlsx')).sheet.rowCount, 4);
+  assert.doesNotMatch(products, />Importar</);
+  assert.equal((await download(await a.get(viewLink(products, 'Exportar')), 'productos.xlsx')).sheet.rowCount, 4);
   assert.equal((await download(await a.get(viewLink(inventory, 'Exportar')), 'inventario.xlsx')).sheet.rowCount, 4);
   assert.equal((await download(await a.post('/exports', {
     csrfToken: viewerToken, view: 'inventory', scope: 'selected', id: '2',
@@ -193,7 +193,7 @@ test('consulta exports both views while anonymous visitors cannot download', asy
 test('an exported catalog can be reimported with categories and quantities, without duplicating anything', async (t) => {
   const source = await app(t);
   await seed(source);
-  const { bytes } = await download(await source.get(viewLink(await (await source.get('/products')).text(), 'Exportar productos')), 'productos.xlsx');
+  const { bytes } = await download(await source.get(viewLink(await (await source.get('/products')).text(), 'Exportar')), 'productos.xlsx');
   const target = await app(t);
   const preview = await importCatalog(target, bytes, { view: 'products', stock: true, operation: 'set' });
   assert.equal(preview.status, 200);

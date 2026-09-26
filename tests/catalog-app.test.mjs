@@ -273,9 +273,9 @@ test('desktop sections, product details and management links respect every role 
     const products = await (await a.get('/products')).text();
     assert.match(products, /Sin categoría/);
     assert.match(products, /href="\/products\/1">Junta de culata/);
-    assert.match(products, /Exportar productos/);
+    assert.match(products, />Exportar<\/a>/);
     assert.equal(products.includes('Agregar producto'), role !== 'viewer');
-    assert.equal(products.includes('Importar productos'), role !== 'viewer');
+    assert.equal(products.includes('>Importar</a>'), role !== 'viewer');
     const inventory = await (await a.get('/inventory')).text();
     assert.doesNotMatch(inventory, /name="archived"|name="state"|<th[^>]*>Marca/);
     assert.match(inventory, /data-column="location" hidden/);
@@ -302,6 +302,91 @@ test('desktop sections, product details and management links respect every role 
 });
 
 const rowIds = (html) => [...html.matchAll(/name="id" value="(\d+)"/g)].map((match) => Number(match[1]));
+
+test('Productos shows the agreed columns and header without the retired filters', async (t) => {
+  const a = await app(t);
+  assert.equal((await a.post('/products', {
+    csrfToken: a.csrfToken, partNumber: 'MOTOR-1', description: 'Bomba de achique', presentation: 'KIT',
+    newCategory: 'Motores', newProductType: 'Motor eléctrico', newSupplier: 'ACME',
+  })).status, 303);
+
+  const page = await (await a.get('/products')).text();
+  assert.match(page, /<th scope="col">P\/N<\/th>\s*<th scope="col">Producto<\/th>\s*<th scope="col">Estado<\/th>\s*<th scope="col" class="align-right">Inventario<\/th>\s*<th scope="col">Categoría<\/th>\s*<th scope="col">Tipo de producto<\/th>\s*<th scope="col">Proveedor<\/th>/);
+  assert.doesNotMatch(page, /<th[^>]*>Acciones<\/th>/);
+  assert.match(page, /Motores/);
+  assert.match(page, /Motor eléctrico/);
+  assert.match(page, /ACME/);
+
+  // Instant search and the state selector replace the filter bar; no size selector or stats.
+  assert.match(page, /class="catalog-toolbar"[^>]*data-instant-search/);
+  assert.match(page, /data-catalog-results/);
+  assert.match(page, /formaction="\/purchase-orders\/add-selection"/);
+  assert.match(page, /name="q"/);
+  assert.match(page, /name="state"/);
+  assert.doesNotMatch(page, /class="filter-bar"/);
+  assert.doesNotMatch(page, /name="presentation"|name="category"|name="brand"|name="outOfStock"|name="lowStock"|name="pageSize"/);
+  assert.doesNotMatch(page, /<th[^>]*>Presentación<\/th>|<th[^>]*>Marca<\/th>/);
+  assert.doesNotMatch(page, /Canales|Catálogos|Más acciones/);
+
+  // The header keeps only Agregar producto, Importar and Exportar.
+  assert.match(page, /href="\/products\/new">Agregar producto</);
+  assert.match(page, /href="\/imports\?view=products">Importar<\/a>/);
+  assert.match(page, /href="\/exports\?[^"]*">Exportar<\/a>/);
+});
+
+test('Productos searches by P/N or name and defaults to active articles', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  assert.equal((await a.post('/products/2/archive', { csrfToken: a.csrfToken })).status, 303);
+
+  const byName = await (await a.get('/products?q=culata')).text();
+  assert.match(byName, /JUNTA/);
+  assert.doesNotMatch(byName, /ANODO|KIT-BOMBA|FILTRO/);
+
+  const byPart = await (await a.get('/products?q=kit-bomba')).text();
+  assert.match(byPart, /KIT-BOMBA/);
+  assert.doesNotMatch(byPart, /JUNTA|ANODO|FILTRO/);
+
+  // Active is the default and archived articles are reachable through the selector.
+  assert.doesNotMatch(await (await a.get('/products')).text(), /ANODO/);
+  const archived = await (await a.get('/products?state=archived')).text();
+  assert.match(archived, /ANODO/);
+  const all = await (await a.get('/products?state=all')).text();
+  assert.match(all, /JUNTA/);
+  assert.match(all, /ANODO/);
+});
+
+test('the Inventario cell colours N existencias against the per-product minimum, ten by default', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  // JUNTA min 2 qty 0, KIT-BOMBA min 4 qty 2 and FILTRO min 1 qty 1, ANODO has no minimum and qty 3.
+  const page = await (await a.get('/products')).text();
+  assert.match(page, /class="quantity-cell inventory-low">0 existencias/);
+  assert.match(page, /class="quantity-cell inventory-low">2 existencias/);
+  assert.match(page, /class="quantity-cell inventory-low">3 existencias/);
+  assert.match(page, /class="quantity-cell inventory-ok">1 existencias/);
+
+  // Without a minimum the fallback is ten.
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'DIEZ', description: 'Sin mínimo', presentation: 'unidad' })).status, 303);
+  await setStock(a, 5, 10);
+  assert.match(await (await a.get('/products')).text(), /class="quantity-cell inventory-ok">10 existencias/);
+});
+
+test('Productos pages at a fixed 50 rows without a size selector', async (t) => {
+  const a = await app(t);
+  for (let index = 1; index <= 55; index++) {
+    assert.equal((await a.post('/products', {
+      csrfToken: a.csrfToken, partNumber: `P-${String(index).padStart(3, '0')}`, description: 'Bomba marina', presentation: 'KIT',
+    })).status, 303);
+  }
+  const first = await (await a.get('/products')).text();
+  assert.equal(rowIds(first).length, 50);
+  assert.match(first, /55 artículos · Página 1 de 2/);
+  assert.doesNotMatch(first, /name="pageSize"/);
+  // A hand-crafted size is ignored: Products always shows 50 per page.
+  assert.equal(rowIds(await (await a.get('/products?pageSize=25')).text()).length, 50);
+  assert.equal(rowIds(await (await a.get('/products?page=2')).text()).length, 5);
+});
 
 test('categories are optional, assigned or created atomically, and editable only by management', async (t) => {
   const a = await app(t);
@@ -347,7 +432,8 @@ test('combined catalog filters run before stable pagination, and inventory is al
   for (const partNumber of ['JUNTA', 'ANODO', 'KIT-BOMBA', 'FILTRO']) {
     assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber, description: 'Otro artículo', presentation: 'unidad' })).status, 303);
   }
-  for (const route of ['/products', '/inventory']) {
+  // Inventory keeps its combined filters and 25/100 sizes; Products no longer has them.
+  for (const route of ['/inventory']) {
     const query = 'q=bomba&category=1&brand=Marca+%26+uno&presentation=KIT&outOfStock=on';
     const first = await (await a.get(`${route}?${query}`)).text();
     assert.deepEqual(rowIds(first), Array.from({ length: 50 }, (_, i) => i + 1));

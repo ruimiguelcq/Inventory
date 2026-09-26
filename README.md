@@ -33,20 +33,21 @@ La protección de operaciones de escritura exige Gestión o Administración.
 
 Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**, donde se preparan las listas de repuestos a pedir. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
 
-**Productos** muestra el catálogo activo y permite consultar los archivados, agregar y editar productos. El nombre abre la ficha con existencias e historial. Gestión y Administración pueden elegir una categoría opcional o crearla al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial. **Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Los enlaces antiguos a archivados redirigen a Productos.
+**Productos** es una búsqueda instantánea por P/N o nombre con un selector **Activos/Archivados/Todos** (Activos por defecto). La tabla muestra exactamente P/N, Producto (con miniatura), Estado, Inventario, Categoría, Tipo de producto y Proveedor. El nombre abre la ficha con existencias e historial. La celda **Inventario** dice `N existencias`, en verde si N alcanza el mínimo de stock del producto y en rojo si no; un producto sin mínimo usa 10. Pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. Gestión y Administración pueden agregar productos, importar y usar las casillas para archivar, desarchivar, exportar la selección o añadirla a una lista de compra. Los enlaces antiguos a archivados redirigen a Productos.
 
-Las tablas de Productos e Inventario ofrecen una barra de búsqueda y filtros:
+Gestión y Administración pueden elegir una categoría, un tipo de producto o un proveedor opcionales, o crearlos al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial.
+
+**Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Mientras llega su propia simplificación, mantiene una barra de búsqueda y filtros:
 
 - **Buscar** por P/N o descripción, sin distinguir mayúsculas.
 - **Filtrar por presentación** (SET, KIT o unidad).
 - **Categoría** (incluida Sin categoría) y **marca**, combinables con los demás filtros.
-- **Estado**, solo en Productos: Activos por defecto, Archivados o Todos los estados.
 - **Agotados:** artículos con cantidad cero.
 - **Stock bajo:** artículos con mínimo configurado y cantidad positiva menor o igual al mínimo. Sin mínimo no se aplica un umbral.
 
-Cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
+En Inventario, cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
 
-La vista inicial es **Todos**, sin vistas personalizadas. Los filtros se aplican antes de paginar: **50 filas** por defecto y opciones de **25/100**. Anterior y Siguiente conservan los filtros. La casilla general selecciona únicamente la página visible; cambiar página, tamaño, búsqueda o filtros limpia la selección.
+Inventario pagina con **50 filas** por defecto y opciones de **25/100**. Anterior y Siguiente conservan los filtros. La casilla general selecciona únicamente la página visible; cambiar página, tamaño, búsqueda o filtros limpia la selección.
 
 Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** de la barra de filtros muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
 

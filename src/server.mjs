@@ -260,7 +260,7 @@ async function hashPassword(password) {
   return { passwordSalt, passwordHash };
 }
 
-// Filters shared by the inventory view and the generic error fallback so both show a consistent list.
+// Filter shape shared by both catalog views and the generic error fallback so they render consistently.
 function inventoryFilters(params) {
   return {
     q: (params.get('q') ?? '').trim(),
@@ -288,15 +288,27 @@ export function createInventoryServer({
   let lastRestore = null;
 
   function catalogOptions(params, inventory = false) {
-    params = new URLSearchParams(params);
-    if (inventory) params.set('state', 'active');
+    // Products exposes only the instant search and the state selector, and pages at a fixed 50;
+    // Inventory keeps its filters and size options until its own ticket simplifies the view.
+    let queryParams;
+    if (inventory) {
+      queryParams = new URLSearchParams(params);
+      queryParams.set('state', 'active');
+    } else {
+      const query = (params.get('q') ?? '').trim();
+      queryParams = new URLSearchParams();
+      if (query) queryParams.set('q', query);
+      queryParams.set('state', catalogState(params));
+      const page = params.get('page');
+      if (page) queryParams.set('page', page);
+    }
     const products = listProducts(database);
     return {
-      ...paginateProducts(filterProducts(products, params), params),
-      filters: inventoryFilters(params),
+      ...paginateProducts(filterProducts(products, queryParams), queryParams),
+      filters: inventoryFilters(queryParams),
       categories: listCategories(database),
       brands: [...new Set(products.map((product) => product.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-      queryParams: params,
+      queryParams,
     };
   }
 
@@ -570,9 +582,10 @@ export function createInventoryServer({
         if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
         const storedSession = sessions.get(session.id);
         const draftOrders = listPurchaseOrders(database).filter((order) => order.status === 'draft');
-        const renderSelectionError = (message) => sendHtml(response, inventoryPage({
-          ...session, ...catalogOptions(url.searchParams, true), message,
-        }), 400);
+        const selectionView = form.get('view') === 'products' ? 'products' : 'inventory';
+        const renderSelectionError = (message) => sendHtml(response, selectionView === 'products'
+          ? productsPage({ ...session, ...catalogOptions(url.searchParams), message })
+          : inventoryPage({ ...session, ...catalogOptions(url.searchParams, true), message }), 400);
 
         if (url.pathname === '/purchase-orders/add-selection') {
           const values = form.getAll('id');

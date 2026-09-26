@@ -1,5 +1,5 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
-import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, stockStatus } from './products.mjs';
+import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, stockStatus } from './products.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, value]);
 
@@ -128,7 +128,7 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   const importHref = `/imports?view=${view}`;
   const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.category || filters.brand || filters.outOfStock || filters.lowStock);
   const csrfToken = session.csrfToken;
-  // The "all" export carries the current filters and view state, so it covers every matching page.
+  // The "all" export carries the current search and state, so it covers every matching page.
   const exportParams = new URLSearchParams(queryParams);
   exportParams.delete('page');
   exportParams.delete('pageSize');
@@ -136,44 +136,57 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   exportParams.set('scope', 'all');
   const exportHref = `/exports?${exportParams.toString()}`;
 
-  const stockActions = (product) => {
-    const history = `<a href="/products/${product.id}/history">Historial</a>`;
-    if (!canManage) return history;
-    if (product.archived) {
-      return `${history} · <form method="post" action="/products/${product.id}/restore" class="inline-form">
-        <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
-        <button type="submit" class="text-link">Desarchivar</button></form>`;
-    }
-    if (inventory) return `<a href="/products/${product.id}/stock">Ajustar existencias</a> · ${history}`;
-    return `${history} · <form method="post" action="/products/${product.id}/archive" class="inline-form">
-      <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
-      <button type="submit" class="text-link">Archivar</button></form>`;
-  };
+  // Inventory keeps a per-row stock action; Products archives and restores through the selection,
+  // so its only columns are the seven the catalog asks for.
+  const stockActions = (product) => (canManage
+    ? `<a href="/products/${product.id}/stock">Ajustar existencias</a> · <a href="/products/${product.id}/history">Historial</a>`
+    : `<a href="/products/${product.id}/history">Historial</a>`);
 
+  // Products reads inventory as `N existencias` coloured by the product minimum;
+  // Inventory keeps its existing quantity, location and minimum columns.
   const rows = products.map((product) => {
-    const status = stockStatus(product);
-    return `<tr>
+    if (inventory) {
+      const status = stockStatus(product);
+      return `<tr>
       <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
       <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
-      ${inventory ? '' : `<td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>`}
       <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
-      ${inventory ? `<td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
-        <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>` : `<td class="muted">${escapeHtml(product.category_name ?? 'Sin categoría')}</td>
-        <td>${escapeHtml(product.presentation)}</td><td>${escapeHtml(product.brand || '—')}</td>`}
+      <td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
+      <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>
       <td>${stockActions(product)}</td>
+    </tr>`;
+    }
+    return `<tr>
+      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
+      <td class="part-number">${escapeHtml(product.part_number)}</td>
+      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
+      <td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>
+      <td class="quantity-cell inventory-${inventoryLevel(product)}">${product.quantity} existencias</td>
+      <td class="muted">${escapeHtml(product.category_name ?? 'Sin categoría')}</td>
+      <td>${escapeHtml(product.product_type_name ?? '—')}</td>
+      <td>${escapeHtml(product.supplier_name ?? '—')}</td>
     </tr>`;
   }).join('');
 
-  const header = `
-    <thead><tr>
+  const header = inventory
+    ? `<thead><tr>
       <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
       <th scope="col">Nombre</th>
       <th scope="col">P/N</th>
-      ${inventory ? '' : '<th scope="col">Estado</th>'}
       <th scope="col" class="align-right">Existencias</th>
-      ${inventory ? '<th scope="col" data-column="location" hidden>Ubicación</th><th scope="col" data-column="minimum" hidden>Mínimo de stock</th>' : '<th scope="col">Categoría</th><th scope="col">Presentación</th><th scope="col">Marca</th>'}
+      <th scope="col" data-column="location" hidden>Ubicación</th><th scope="col" data-column="minimum" hidden>Mínimo de stock</th>
       <th scope="col">Acciones</th>
+    </tr></thead>`
+    : `<thead><tr>
+      <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
+      <th scope="col">P/N</th>
+      <th scope="col">Producto</th>
+      <th scope="col">Estado</th>
+      <th scope="col" class="align-right">Inventario</th>
+      <th scope="col">Categoría</th>
+      <th scope="col">Tipo de producto</th>
+      <th scope="col">Proveedor</th>
     </tr></thead>`;
 
   const headingTitle = hasActiveFilter ? 'Resultados' : archivedView ? 'Repuestos archivados' : 'Todos';
@@ -194,7 +207,8 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
           <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>` : '<p>Todavía no hay repuestos registrados.</p>'}
         </div>`;
 
-  const filterBar = `
+  // Inventory keeps its search and filters until its own ticket simplifies the view.
+  const inventoryToolbar = `
     <form class="filter-bar" method="get" action="${route}">
       <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o descripción" aria-label="Buscar repuestos">
       <select name="presentation" aria-label="Filtrar por presentación">
@@ -212,22 +226,49 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
       </select>
       <label class="filter-check"><input type="checkbox" name="outOfStock" ${filters.outOfStock ? 'checked' : ''}> Agotados</label>
       <label class="filter-check"><input type="checkbox" name="lowStock" ${filters.lowStock ? 'checked' : ''}> Stock bajo</label>
-      ${inventory ? '' : `<select name="state" aria-label="Filtrar por estado">
-        <option value="active" ${filters.state === 'active' ? 'selected' : ''}>Activos</option>
-        <option value="archived" ${archivedView ? 'selected' : ''}>Archivados</option>
-        <option value="all" ${filters.state === 'all' ? 'selected' : ''}>Todos los estados</option>
-      </select>`}
       <label class="page-size">Filas por página <select name="pageSize" aria-label="Filas por página">
         ${[25, 50, 100].map((size) => `<option value="${size}" ${(pagination?.pageSize ?? 50) === size ? 'selected' : ''}>${size}</option>`).join('')}
       </select></label>
       <button class="button button-secondary" type="submit">Filtrar</button>
-      ${hasActiveFilter || archivedView || filters.state === 'all' ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
+      ${hasActiveFilter ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
     </form>`;
+
+  // Products searches while typing (progressive enhancement, normal submit as fallback)
+  // and offers the state selector; it has no filter bar and pages at a fixed 50 rows.
+  const productsToolbar = `
+    <form class="catalog-toolbar" method="get" action="${route}" data-instant-search>
+      <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o nombre" aria-label="Buscar por P/N o nombre">
+      <select name="state" aria-label="Estado">
+        <option value="active" ${filters.state === 'active' || !filters.state ? 'selected' : ''}>Activos</option>
+        <option value="archived" ${filters.state === 'archived' ? 'selected' : ''}>Archivados</option>
+        <option value="all" ${filters.state === 'all' ? 'selected' : ''}>Todos</option>
+      </select>
+      <button class="visually-hidden" type="submit">Buscar</button>
+    </form>`;
+
+  const selectionActions = `
+    <form id="export-selection" class="selection-actions" method="post" action="/exports">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+      <input type="hidden" name="view" value="${view}">
+      <input type="hidden" name="scope" value="selected">
+      <span data-selection-count role="status">0 seleccionados</span>
+      <button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>
+      ${canManage ? '<button class="button button-secondary" type="submit" formaction="/purchase-orders/add-selection" data-requires-selection disabled>Añadir a lista de compra</button>' : ''}
+      ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
+        <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
+    </form>`;
+
+  const headerActions = inventory
+    ? `${canManage ? `<a class="button button-secondary" href="${importHref}">Importar</a>` : ''}
+      <a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>`
+    : `${canManage ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}
+      ${canManage ? `<a class="button button-secondary" href="${importHref}">Importar</a>` : ''}
+      <a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>`;
 
   const pageLink = (number, label) => {
     const params = new URLSearchParams(queryParams);
     params.set('page', number);
-    params.set('pageSize', pagination.pageSize);
+    if (inventory) params.set('pageSize', pagination.pageSize);
     return `<a class="button button-secondary" href="${route}?${escapeHtml(params.toString())}">${label}</a>`;
   };
   const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
@@ -241,39 +282,28 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
       <div>
         <h1>${title}</h1>
       </div>
-      <div class="form-actions">
-        ${canManage ? `<a class="button button-secondary" href="${importHref}">${inventory ? 'Importar' : 'Importar productos'}</a>` : ''}
-        <a class="button button-secondary" href="${escapeHtml(exportHref)}">${inventory ? 'Exportar' : 'Exportar productos'}</a>
-        ${canManage && !inventory ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}
-      </div>
+      <div class="form-actions">${headerActions}</div>
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
         <div>
           <h2>${headingTitle}</h2>
         </div>
-        <form id="export-selection" class="selection-actions" method="post" action="/exports">
-          <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
-          <input type="hidden" name="view" value="${view}">
-          <input type="hidden" name="scope" value="selected">
-          <span data-selection-count role="status">0 seleccionados</span>
-          <button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>
-          ${canManage && inventory ? '<button class="button button-secondary" type="submit" formaction="/purchase-orders/add-selection" data-requires-selection disabled>Añadir a lista de compra</button>' : ''}
-          ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
-            <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
-        </form>
+        ${selectionActions}
       </div>
-      ${filterBar}
+      ${inventory ? inventoryToolbar : productsToolbar}
       ${inventory ? `<fieldset class="column-controls"><legend>Columnas opcionales</legend>
         <label><input type="checkbox" data-column-toggle="location"> Ubicación</label>
         <label><input type="checkbox" data-column-toggle="minimum"> Mínimo de stock</label>
       </fieldset>` : ''}
       ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
-      ${products.length ? `
-        <div class="table-scroll">
-          <table>${header}<tbody>${rows}</tbody></table>
-        </div>` : emptyState}
-      ${pager}
+      <div data-catalog-results>
+        ${products.length ? `
+          <div class="table-scroll">
+            <table>${header}<tbody>${rows}</tbody></table>
+          </div>` : emptyState}
+        ${pager}
+      </div>
     </section>`;
   return page(title, content, { ...session, active: inventory ? 'inventory' : 'products' });
 }

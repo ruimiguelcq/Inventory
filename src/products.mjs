@@ -1,5 +1,7 @@
 export const PRESENTATIONS = ['SET', 'KIT', 'unidad'];
 export const MAX_LONG_DESCRIPTION = 2000;
+// The catalog colours the inventory cell against the product minimum, falling back to ten.
+export const DEFAULT_MINIMUM_STOCK = 10;
 
 // Dollars typed by the user become integer cents; parsing the string avoids float rounding.
 export function parsePrice(input) {
@@ -55,6 +57,12 @@ export function stockStatus(product) {
   if (product.quantity === 0) return 'agotado';
   if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';
   return null;
+}
+
+// Colour rule for the catalog inventory cell: green when the quantity reaches the
+// product minimum (10 by default), red when it falls short.
+export function inventoryLevel(product) {
+  return product.quantity >= (product.minimum_stock ?? DEFAULT_MINIMUM_STOCK) ? 'ok' : 'low';
 }
 
 // Estado elegido para el catálogo; sin parámetro se muestran los activos.

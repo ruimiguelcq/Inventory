@@ -92,7 +92,9 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /Conchas de biela/);
   assert.match(savedHtml, /SET/);
   const catalogHtml = await (await fetch(`${baseUrl}/products`, { headers: { cookie: administratorCookie } })).text();
-  assert.match(catalogHtml, /Marina Parts/);
+  assert.match(catalogHtml, /6L-12345/);
+  const detailHtml = await (await fetch(`${baseUrl}/products/1`, { headers: { cookie: administratorCookie } })).text();
+  assert.match(detailHtml, /Marina Parts/);
   assert.match(savedHtml, /Estante B · caja 4/);
   assert.match(savedHtml, /<td[^>]*data-column="minimum"[^>]*>2<\/td>/);
   assert.match(savedHtml, /<th[^>]*>Existencias<\/th>/);
