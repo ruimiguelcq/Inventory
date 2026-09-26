@@ -68,6 +68,8 @@ test('the product form ships the two-column layout, Multimedia, Costo and the in
   assert.match(form, /Precio de fábrica/);
   assert.match(form, /Ganancia/);
   assert.match(form, /currency-input__symbol/);
+  // The card title already says "Precio", so the field carries no visible label.
+  assert.doesNotMatch(form, /<label for="price"/);
   assert.doesNotMatch(form, /Cobrar impuestos|Precio unitario|Precio de comparación/);
   assert.doesNotMatch(form, /name="minimumStock"/);
   assert.doesNotMatch(form, /Mínimo de stock|Cantidad inicial/);

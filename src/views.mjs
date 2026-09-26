@@ -571,9 +571,8 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
           <section class="form-section form-card price-card">
             <h2>Precio</h2>
             <div class="field">
-              <label for="price">Precio</label>
               <div class="currency-input">
-                <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0,00" data-price>
+                <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0,00" aria-label="Precio" data-price>
                 <span class="currency-input__symbol" aria-hidden="true">$</span>
               </div>
             </div>
