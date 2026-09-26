@@ -27,20 +27,39 @@ export function stockStatus(product) {
   return null;
 }
 
+// Estado elegido para el catálogo; sin parámetro se muestran los activos.
+export function catalogState(params) {
+  return params.get('state') ?? (params.get('archived') === 'on' ? 'archived' : 'active');
+}
+
 // Filtra el listado del inventario a partir de los parámetros de búsqueda de la interfaz.
 export function filterProducts(products, params) {
-  const archived = params.get('archived') === 'on';
+  const state = catalogState(params);
   const query = (params.get('q') ?? '').trim().toLowerCase();
   const presentation = params.get('presentation') ?? '';
+  const category = params.get('category') ?? '';
+  const brand = params.get('brand') ?? '';
   const statuses = [];
   if (params.get('outOfStock') === 'on') statuses.push('agotado');
   if (params.get('lowStock') === 'on') statuses.push('stockbajo');
 
   return products.filter((product) => {
-    if (Boolean(product.archived) !== archived) return false;
+    if (state !== 'all' && Boolean(product.archived) !== (state === 'archived')) return false;
     if (query && !product.part_number.toLowerCase().includes(query) && !product.description.toLowerCase().includes(query)) return false;
     if (presentation && product.presentation !== presentation) return false;
+    if (category === 'none' ? product.category_id != null : category && String(product.category_id) !== category) return false;
+    if (brand && product.brand !== brand) return false;
     if (statuses.length && !statuses.includes(stockStatus(product))) return false;
     return true;
   });
+}
+
+export function paginateProducts(products, params) {
+  const requestedSize = Number(params.get('pageSize'));
+  const pageSize = [25, 50, 100].includes(requestedSize) ? requestedSize : 50;
+  const total = products.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const requestedPage = Number(params.get('page'));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pages) : 1;
+  return { products: products.slice((page - 1) * pageSize, page * pageSize), pagination: { page, pageSize, total, pages } };
 }

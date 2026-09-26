@@ -42,10 +42,13 @@ function backupFiles(directory) {
 }
 
 function inspectCounts(database) {
-  return database.prepare(`SELECT
+  const counts = database.prepare(`SELECT
     (SELECT COUNT(*) FROM products) AS products,
     (SELECT COUNT(*) FROM stock_movements) AS movements,
     (SELECT COUNT(*) FROM users) AS users`).get();
+  // Snapshots from before categories remain valid restore points; migration adds an empty table.
+  const hasCategories = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'categories'").get();
+  return { ...counts, categories: hasCategories ? database.prepare('SELECT COUNT(*) AS count FROM categories').get().count : 0 };
 }
 
 // Opens a candidate backup read-only and reports whether it is a sound snapshot.

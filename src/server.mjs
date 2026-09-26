@@ -10,17 +10,17 @@ import {
   findProduct,
   findUserByUsername,
   hasAdministrator,
-  insertProduct,
   insertUser,
   listProducts,
+  listCategories,
   listUsers,
   openDatabase,
   setProductArchived,
-  updateProduct,
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { filterProducts, validateProduct } from './products.mjs';
+import { catalogState, filterProducts, paginateProducts, validateProduct } from './products.mjs';
+import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
 import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
@@ -91,15 +91,18 @@ function productFrom(form, previous = {}) {
     brand: form.get('brand') ?? '',
     location: form.get('location') ?? '',
     minimum_stock: form.get('minimumStock') ?? '',
+    category_id: form.get('categoryId') ?? previous.category_id ?? '',
+    new_category: form.get('newCategory') ?? '',
   };
 }
 
-function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400 } = {}) {
+function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400, categories = [] } = {}) {
   return sendHtml(response, productFormPage({
     ...session,
     product: productFrom(form, previousProduct),
     isNew,
     error: message,
+    categories,
   }), status);
 }
 
@@ -112,12 +115,14 @@ function saveProduct(database, response, { form, session, product, isNew, existi
   const user = findUser(database, session.userId);
   if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
   try {
-    if (isNew) insertProduct(database, product);
-    else updateProduct(database, existingProduct.id, product);
+    saveCatalogProduct(database, session.userId, product, form, existingProduct);
   } catch (error) {
+    if (error instanceof CatalogError) {
+      return sendProductFormError(response, form, session, error.message, { isNew, previousProduct: existingProduct, status: error.status, categories: listCategories(database) });
+    }
     if (isUniqueViolation(error)) {
       const message = isNew ? 'Ya existe un repuesto con ese P/N.' : 'Ya existe otro repuesto con ese P/N.';
-      return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409 });
+      return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409, categories: listCategories(database) });
     }
     throw error;
   }
@@ -196,6 +201,9 @@ function inventoryFilters(params) {
   return {
     q: (params.get('q') ?? '').trim(),
     presentation: params.get('presentation') ?? '',
+    category: params.get('category') ?? '',
+    brand: params.get('brand') ?? '',
+    state: catalogState(params),
     outOfStock: params.get('outOfStock') === 'on',
     lowStock: params.get('lowStock') === 'on',
     archived: params.get('archived') === 'on',
@@ -213,6 +221,19 @@ export function createInventoryServer({
   const sessions = new Map();
   const initialSetupToken = randomBytes(32).toString('base64url');
   let lastRestore = null;
+
+  function catalogOptions(params, inventory = false) {
+    params = new URLSearchParams(params);
+    if (inventory) params.set('state', 'active');
+    const products = listProducts(database);
+    return {
+      ...paginateProducts(filterProducts(products, params), params),
+      filters: inventoryFilters(params),
+      categories: listCategories(database),
+      brands: [...new Set(products.map((product) => product.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+      queryParams: params,
+    };
+  }
 
   function runAutomaticBackup() {
     try {
@@ -320,7 +341,7 @@ export function createInventoryServer({
           selected = selectExportProducts(products, params);
         } catch (error) {
           if (!(error instanceof ExportError)) throw error;
-          return sendHtml(response, inventoryPage({ ...session, products, message: error.message }), 400);
+          return sendHtml(response, inventoryPage({ ...session, ...catalogOptions(new URLSearchParams(), true), message: error.message }), 400);
         }
         const buffer = await exportInventory(selected);
         response.writeHead(200, {
@@ -416,7 +437,7 @@ export function createInventoryServer({
               database = openDatabase(databasePath);
               const summary = summarizeDatabase(database);
               if (summary.integrity !== 'ok' || summary.products !== backup.products
-                || summary.movements !== backup.movements || summary.users !== backup.users) {
+                || summary.movements !== backup.movements || summary.users !== backup.users || summary.categories !== backup.categories) {
                 throw new BackupError('La restauración no coincide con la copia verificada.', 500);
               }
               lastRestore = { backup: backup.file, safety: safetyBackup.file, restoredAt: new Date().toISOString(), ...summary };
@@ -455,8 +476,7 @@ export function createInventoryServer({
         const render = url.pathname === '/products' ? productsPage : inventoryPage;
         return authenticatedPage(response, render({
           ...session,
-          products: filterProducts(listProducts(database), params),
-          filters: inventoryFilters(params),
+          ...catalogOptions(params, url.pathname === '/inventory'),
           message,
         }));
       }
@@ -506,7 +526,7 @@ export function createInventoryServer({
       }
 
       if (request.method === 'GET' && url.pathname === '/products/new') {
-        return authenticatedPage(response, productFormPage(session));
+        return authenticatedPage(response, productFormPage({ ...session, categories: listCategories(database) }));
       }
 
       const stockMatch = url.pathname.match(/^\/products\/(\d+)\/(stock(?:\/confirm)?|history)$/);
@@ -553,8 +573,22 @@ export function createInventoryServer({
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error);
+        if (error) return sendProductFormError(response, form, session, error, { categories: listCategories(database) });
         return saveProduct(database, response, { form, session, product, isNew: true });
+      }
+
+      if (request.method === 'POST' && ['/products/archive', '/products/restore'].includes(url.pathname)) {
+        const form = await readForm(request);
+        if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+        const archiving = url.pathname === '/products/archive';
+        try {
+          archiveSelection(database, session.userId, form.getAll('id'), archiving);
+        } catch (error) {
+          if (!(error instanceof CatalogError)) throw error;
+          if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+          return sendHtml(response, productsPage({ ...session, ...catalogOptions(url.searchParams), message: error.message }), error.status);
+        }
+        return redirect(response, archiving ? '/products?msg=archived' : '/products?msg=restored&state=archived');
       }
 
       const archiveMatch = url.pathname.match(/^\/products\/(\d+)\/(archive|restore)$/);
@@ -576,7 +610,7 @@ export function createInventoryServer({
       if (request.method === 'GET' && editMatch) {
         const product = findProduct(database, Number(editMatch[1]));
         if (!product) return sendHtml(response, notFoundPage(session), 404);
-        return authenticatedPage(response, productFormPage({ ...session, product, isNew: false }));
+        return authenticatedPage(response, productFormPage({ ...session, product, isNew: false, categories: listCategories(database) }));
       }
 
       const updateMatch = url.pathname.match(/^\/products\/(\d+)$/);
@@ -592,15 +626,14 @@ export function createInventoryServer({
         const existingProduct = findProduct(database, id);
         if (!existingProduct) return sendHtml(response, notFoundPage(session), 404);
         const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct });
+        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct, categories: listCategories(database) });
         return saveProduct(database, response, { form, session, product, isNew: false, existingProduct });
       }
 
       return sendHtml(response, notFoundPage(session), 404);
     } catch (error) {
       const message = error.message === 'El formulario supera el tamaño permitido.' ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
-      const filters = inventoryFilters(url.searchParams);
-      sendHtml(response, session ? productsPage({ ...session, products: filterProducts(listProducts(database), url.searchParams), filters, message }) : loginPage({ error: message }), 400);
+      sendHtml(response, session ? productsPage({ ...session, ...catalogOptions(url.searchParams), message }) : loginPage({ error: message }), 400);
     }
   });
 

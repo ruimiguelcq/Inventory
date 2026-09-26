@@ -387,6 +387,16 @@ tbody tr:hover { background: #f7fbfa; }
 
 .filter-check input { margin: 0; }
 
+.selection-actions, .pagination, .pagination > div, .page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pagination { justify-content: space-between; padding: 14px 19px; border-top: 1px solid var(--line); }
+.page-size, [data-selection-count], .pagination { font-size: 13px; }
+
 .badge {
   display: inline-block;
   margin-left: 6px;

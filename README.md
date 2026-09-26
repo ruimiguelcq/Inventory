@@ -33,18 +33,22 @@ La protección de operaciones de escritura exige Gestión o Administración.
 
 Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**; esta última es una sección pendiente de implementación. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
 
-**Productos** muestra el catálogo activo y permite consultar los archivados, agregar y editar productos. El nombre abre la ficha con existencias e historial. La categoría aparece por ahora como **Sin categoría**. **Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Los enlaces antiguos a archivados redirigen a Productos.
+**Productos** muestra el catálogo activo y permite consultar los archivados, agregar y editar productos. El nombre abre la ficha con existencias e historial. Gestión y Administración pueden elegir una categoría opcional o crearla al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial. **Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Los enlaces antiguos a archivados redirigen a Productos.
 
 Las tablas de Productos e Inventario ofrecen una barra de búsqueda y filtros:
 
 - **Buscar** por P/N o descripción, sin distinguir mayúsculas.
 - **Filtrar por presentación** (SET, KIT o unidad).
+- **Categoría** (incluida Sin categoría) y **marca**, combinables con los demás filtros.
+- **Estado**, solo en Productos: Activos por defecto, Archivados o Todos los estados.
 - **Agotados:** artículos con cantidad cero.
-- **Stock bajo:** artículos con mínimo configurado y cantidad menor o igual al mínimo.
+- **Stock bajo:** artículos con mínimo configurado y cantidad positiva menor o igual al mínimo. Sin mínimo no se aplica un umbral.
 
 Cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
 
-Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial. La opción **Archivados** de la barra de filtros de Productos muestra los artículos archivados, desde donde se pueden **Desarchivar**. La vista normal prioriza los artículos activos; no hay borrado definitivo desde la interfaz.
+La vista inicial es **Todos**, sin vistas personalizadas. Los filtros se aplican antes de paginar: **50 filas** por defecto y opciones de **25/100**. Anterior y Siguiente conservan los filtros. La casilla general selecciona únicamente la página visible; cambiar página, tamaño, búsqueda o filtros limpia la selección.
+
+Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** de la barra de filtros muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
 
 ## Existencias e historial
 
@@ -97,9 +101,9 @@ La aplicación crea copias de seguridad automáticas de la base de datos sin int
 - Se guardan como archivos SQLite en `data/backups/` (o en `BACKUP_DIRECTORY`).
 - Se conservan las 10 más recientes; las anteriores se eliminan automáticamente (`BACKUP_RETENTION`).
 
-Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos y movimientos e integridad verificada.
+Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos, movimientos y categorías e integridad verificada.
 
-**Restaurar** una copia reemplaza artículos, existencias e historial por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que su número de artículos y movimientos coincide con la copia elegida. Una copia dañada aparece como **No verificable** y no puede restaurarse.
+**Restaurar** una copia reemplaza cuentas, artículos, categorías, existencias e historial por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que sus recuentos de cuentas, artículos, movimientos y categorías coinciden con la copia elegida. Las copias anteriores a las categorías siguen siendo restaurables y se migran con los artículos Sin categoría. Una copia dañada aparece como **No verificable** y no puede restaurarse.
 
 Parámetros opcionales: `BACKUP_DIRECTORY`, `BACKUP_INTERVAL_MS` y `BACKUP_RETENTION`.
 

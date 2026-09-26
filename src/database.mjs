@@ -39,6 +39,13 @@ export function openDatabase(databasePath) {
   if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'archived')) {
     database.exec('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1));');
   }
+  database.exec(`CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
+  )`);
+  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'category_id')) {
+    database.exec('ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)');
+  }
   database.exec(`
     CREATE TABLE IF NOT EXISTS stock_movements (
       id INTEGER PRIMARY KEY,
@@ -111,15 +118,20 @@ export function updateUserRole(database, id, role) {
 }
 
 export function findProduct(database, id) {
-  return database.prepare('SELECT * FROM products WHERE id = ?').get(id);
+  return database.prepare(`SELECT products.*, categories.name AS category_name
+    FROM products LEFT JOIN categories ON categories.id = products.category_id WHERE products.id = ?`).get(id);
 }
 
 export function listProducts(database) {
   return database.prepare(`
-    SELECT id, part_number, description, presentation, brand, location, minimum_stock, quantity, archived
-    FROM products
-    ORDER BY part_number COLLATE NOCASE
+    SELECT products.*, categories.name AS category_name
+    FROM products LEFT JOIN categories ON categories.id = products.category_id
+    ORDER BY part_number COLLATE NOCASE, products.id
   `).all();
+}
+
+export function listCategories(database) {
+  return database.prepare('SELECT id, name FROM categories ORDER BY name COLLATE NOCASE, id').all();
 }
 
 export function insertProduct(database, product) {

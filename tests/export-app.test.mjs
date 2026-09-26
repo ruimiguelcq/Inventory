@@ -187,10 +187,12 @@ test('consulta can download a selection larger than the HTTP URL limit', async (
   assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' })).status, 303);
   const login = await a.post('/login', { username: 'viewer', password: 'equipo-seguro-123' });
   a.cookie = login.headers.get('set-cookie').split(';')[0];
+  // The table paginates the selection to the visible page, but the export endpoint
+  // still accepts an explicit selection too large for a GET URL.
   const inventory = await (await a.get('/inventory')).text();
+  assert.equal([...inventory.matchAll(/type="checkbox" name="id" value="(\d+)"/g)].length, 50);
   const selection = new URLSearchParams({ csrfToken: a.token(inventory), scope: 'selected' });
-  const ids = [...inventory.matchAll(/type="checkbox" name="id" value="(\d+)"/g)].map((match) => match[1]);
-  assert.equal(ids.length, 2400);
+  const ids = Array.from({ length: 2400 }, (_, index) => String(index + 1));
   for (const id of ids) selection.append('id', id);
   assert.ok(Buffer.byteLength(selection.toString()) > 16_384);
   const { sheet } = await download(await a.post('/exports', selection));

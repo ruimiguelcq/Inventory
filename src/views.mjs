@@ -106,12 +106,12 @@ export function productsPage(options) {
   return catalogPage(options);
 }
 
-function catalogPage({ products, filters = {}, inventory = false, ...session }) {
+function catalogPage({ products, filters = {}, categories = [], brands = [], pagination, queryParams = new URLSearchParams(), inventory = false, ...session }) {
   const canManage = canManageInventory(session.role);
-  const archivedView = !inventory && Boolean(filters.archived);
+  const archivedView = !inventory && (filters.state === 'archived' || (!filters.state && Boolean(filters.archived)));
   const route = inventory ? '/inventory' : '/products';
   const title = inventory ? 'Inventario' : 'Productos';
-  const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.outOfStock || filters.lowStock);
+  const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.category || filters.brand || filters.outOfStock || filters.lowStock);
   const csrfToken = session.csrfToken;
 
   const badgeOf = (status) => status === 'agotado'
@@ -121,7 +121,7 @@ function catalogPage({ products, filters = {}, inventory = false, ...session }) 
   const stockActions = (product) => {
     const history = `<a href="/products/${product.id}/history">Historial</a>`;
     if (!canManage) return history;
-    if (archivedView) {
+    if (product.archived) {
       return `${history} · <form method="post" action="/products/${product.id}/restore" class="inline-form">
         <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
         <button type="submit" class="text-link">Desarchivar</button></form>`;
@@ -135,13 +135,13 @@ function catalogPage({ products, filters = {}, inventory = false, ...session }) 
   const rows = products.map((product) => {
     const status = stockStatus(product);
     return `<tr>
-      <td><input type="checkbox" name="id" value="${product.id}" ${archivedView ? '' : 'form="export-selection"'} data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
+      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
       <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
       ${inventory ? '' : `<td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>`}
       <td class="quantity-cell">${product.quantity}${status ? ` ${badgeOf(status)}` : ''}</td>
       ${inventory ? `<td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
-        <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>` : `<td class="muted">Sin categoría</td>
+        <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>` : `<td class="muted">${escapeHtml(product.category_name ?? 'Sin categoría')}</td>
         <td>${escapeHtml(product.presentation)}</td><td>${escapeHtml(product.brand || '—')}</td>`}
       <td>${stockActions(product)}</td>
     </tr>`;
@@ -183,12 +183,40 @@ function catalogPage({ products, filters = {}, inventory = false, ...session }) 
         <option value="">Todas las presentaciones</option>
         ${PRESENTATIONS.map(([value]) => `<option value="${value}" ${filters.presentation === value ? 'selected' : ''}>${value}</option>`).join('')}
       </select>
+      <select name="category" aria-label="Filtrar por categoría">
+        <option value="">Todas las categorías</option>
+        <option value="none" ${filters.category === 'none' ? 'selected' : ''}>Sin categoría</option>
+        ${categories.map((category) => `<option value="${category.id}" ${filters.category === String(category.id) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}
+      </select>
+      <select name="brand" aria-label="Filtrar por marca">
+        <option value="">Todas las marcas</option>
+        ${brands.map((brand) => `<option value="${escapeHtml(brand)}" ${filters.brand === brand ? 'selected' : ''}>${escapeHtml(brand)}</option>`).join('')}
+      </select>
       <label class="filter-check"><input type="checkbox" name="outOfStock" ${filters.outOfStock ? 'checked' : ''}> Agotados</label>
       <label class="filter-check"><input type="checkbox" name="lowStock" ${filters.lowStock ? 'checked' : ''}> Stock bajo</label>
-      ${inventory ? '' : `<label class="filter-check"><input type="checkbox" name="archived" ${archivedView ? 'checked' : ''}> Archivados</label>`}
+      ${inventory ? '' : `<select name="state" aria-label="Filtrar por estado">
+        <option value="active" ${filters.state === 'active' ? 'selected' : ''}>Activos</option>
+        <option value="archived" ${archivedView ? 'selected' : ''}>Archivados</option>
+        <option value="all" ${filters.state === 'all' ? 'selected' : ''}>Todos los estados</option>
+      </select>`}
+      <label class="page-size">Filas por página <select name="pageSize" aria-label="Filas por página">
+        ${[25, 50, 100].map((size) => `<option value="${size}" ${(pagination?.pageSize ?? 50) === size ? 'selected' : ''}>${size}</option>`).join('')}
+      </select></label>
       <button class="button button-secondary" type="submit">Filtrar</button>
-      ${hasActiveFilter || archivedView ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
+      ${hasActiveFilter || archivedView || filters.state === 'all' ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
     </form>`;
+
+  const pageLink = (number, label) => {
+    const params = new URLSearchParams(queryParams);
+    params.set('page', number);
+    params.set('pageSize', pagination.pageSize);
+    return `<a class="button button-secondary" href="${route}?${escapeHtml(params.toString())}">${label}</a>`;
+  };
+  const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
+    <span>${pagination.total} artículos · Página ${pagination.page} de ${pagination.pages}</span>
+    <div>${pagination.page > 1 ? pageLink(pagination.page - 1, 'Anterior') : ''}
+      ${pagination.page < pagination.pages ? pageLink(pagination.page + 1, 'Siguiente') : ''}</div>
+  </nav>` : '';
 
   const content = `
     <div class="page-heading">
@@ -206,11 +234,14 @@ function catalogPage({ products, filters = {}, inventory = false, ...session }) 
         <div>
           <h2>${headingTitle}</h2>
         </div>
-        ${archivedView ? '' : `<form id="export-selection" method="post" action="/exports">
+        <form id="export-selection" class="selection-actions" method="post" action="/exports">
           <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
           <input type="hidden" name="scope" value="selected">
-          <button class="button button-secondary" type="submit" ${products.length ? '' : 'disabled'}>Exportar selección a Excel</button>
-        </form>`}
+          <span data-selection-count role="status">0 seleccionados</span>
+          ${archivedView ? '' : '<button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>'}
+          ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
+            <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
+        </form>
       </div>
       ${filterBar}
       ${inventory ? `<fieldset class="column-controls"><legend>Columnas opcionales</legend>
@@ -222,6 +253,7 @@ function catalogPage({ products, filters = {}, inventory = false, ...session }) 
         <div class="table-scroll">
           <table>${header}<tbody>${rows}</tbody></table>
         </div>` : emptyState}
+      ${pager}
     </section>`;
   return page(title, content, { ...session, active: inventory ? 'inventory' : 'products' });
 }
@@ -241,7 +273,7 @@ export function productDetailPage({ product, ...session }) {
       <dl class="product-details">
         <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
         <dt>Existencias</dt><dd>${product.quantity}</dd>
-        <dt>Categoría</dt><dd>Sin categoría</dd>
+        <dt>Categoría</dt><dd>${escapeHtml(product.category_name ?? 'Sin categoría')}</dd>
         <dt>Presentación</dt><dd>${escapeHtml(product.presentation)}</dd>
         <dt>Marca</dt><dd>${escapeHtml(product.brand || '—')}</dd>
         <dt>Ubicación</dt><dd>${escapeHtml(product.location || '—')}</dd>
@@ -299,7 +331,7 @@ export function forbiddenPage(session) {
     <a class="button button-secondary" href="/inventory">Volver al inventario</a></section>`, session);
 }
 
-export function productFormPage({ product = {}, error = '', isNew = true, ...session }) {
+export function productFormPage({ product = {}, categories = [], error = '', isNew = true, ...session }) {
   const presentationOptions = `
     <option value="" disabled ${product.presentation ? '' : 'selected'}>Selecciona una presentación</option>
     ${PRESENTATIONS.map(([value, label]) => `<option value="${value}" ${product.presentation === value ? 'selected' : ''}>${label}</option>`).join('')}
@@ -334,6 +366,18 @@ export function productFormPage({ product = {}, error = '', isNew = true, ...ses
           <div class="field">
             <label for="brand">Marca <span class="optional-mark">Opcional</span></label>
             <input id="brand" name="brand" value="${escapeHtml(product.brand ?? '')}" maxlength="100">
+          </div>
+          <div class="field">
+            <label for="categoryId">Categoría <span class="optional-mark">Opcional</span></label>
+            <select id="categoryId" name="categoryId">
+              <option value="">Sin categoría</option>
+              ${categories.map((category) => `<option value="${category.id}" ${String(product.category_id) === String(category.id) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="newCategory">Crear categoría</label>
+            <input id="newCategory" name="newCategory" value="${escapeHtml(product.new_category ?? '')}" maxlength="100" aria-describedby="category-help">
+            <p id="category-help" class="form-hint">Elige Sin categoría para crear y asignar una nueva al guardar.</p>
           </div>
         </div>
       </section>
@@ -496,7 +540,7 @@ function formatUtc(value) {
 function backupCounts(backup) {
   const articles = backup.products ?? 0;
   const movements = backup.movements ?? 0;
-  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'}`;
+  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías`;
 }
 
 export function backupsPage({ backups, lastRestore = null, error = '', message = '', ...session }) {
@@ -522,7 +566,7 @@ export function backupsPage({ backups, lastRestore = null, error = '', message =
   return page('Copias de seguridad', `
     <div class="page-heading">
       <div><p class="eyebrow">Administración</p><h1>Copias de seguridad</h1>
-        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve artículos, existencias e historial.</p></div>
+        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve cuentas, artículos, categorías, existencias e historial.</p></div>
       <form method="post" action="/backups">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
         <button class="button button-primary" type="submit">Crear copia ahora</button>

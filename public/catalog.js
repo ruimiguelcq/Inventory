@@ -35,6 +35,9 @@ const updateSelection = () => {
   const count = selections.filter((input) => input.checked).length;
   selectAll.checked = count > 0 && count === selections.length;
   selectAll.indeterminate = count > 0 && count < selections.length;
+  document.querySelectorAll('[data-requires-selection]').forEach((button) => { button.disabled = count === 0; });
+  const counter = document.querySelector('[data-selection-count]');
+  if (counter) counter.textContent = `${count} seleccionados`;
 };
 selectAll?.addEventListener('change', () => {
   selections.forEach((input) => { input.checked = selectAll.checked; });
@@ -46,4 +49,6 @@ const clearSelection = () => {
   updateSelection();
 };
 document.querySelector('.filter-bar')?.addEventListener('input', clearSelection);
+document.querySelector('.filter-bar')?.addEventListener('change', clearSelection);
+document.querySelectorAll('.pagination a').forEach((link) => link.addEventListener('click', clearSelection));
 window.addEventListener('pageshow', clearSelection);

@@ -9,13 +9,14 @@ import { openDatabase } from '../src/database.mjs';
 
 async function app(t) {
   const directory = await mkdtemp(join(tmpdir(), 'inventory-catalog-'));
-  const server = createInventoryServer({ databasePath: join(directory, 'inventory.sqlite') });
+  const databasePath = join(directory, 'inventory.sqlite');
+  let server = createInventoryServer({ databasePath });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   });
-  const url = `http://127.0.0.1:${server.address().port}`;
+  let url = `http://127.0.0.1:${server.address().port}`;
   let cookie = '';
   const get = (path) => fetch(url + path, { headers: { cookie }, redirect: 'manual' });
   const post = (path, fields) => fetch(url + path, {
@@ -32,7 +33,13 @@ async function app(t) {
     cookie = response.headers.get('set-cookie').split(';')[0];
     return token(await (await get('/inventory')).text());
   };
-  return { url, get, post, token, csrfToken, signIn, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
+  const restart = async () => {
+    await new Promise((resolve) => server.close(resolve));
+    server = createInventoryServer({ databasePath });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    url = `http://127.0.0.1:${server.address().port}`;
+  };
+  return { url, get, post, token, csrfToken, signIn, restart, databasePath, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
 }
 
 async function setStock(a, id, quantity) {
@@ -223,6 +230,8 @@ test('an existing database is upgraded with the archived column and keeps its ar
   });
   const columns = upgraded.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
   assert.ok(columns.includes('archived'), 'archived column added');
+  assert.ok(columns.includes('category_id'), 'category column added');
+  assert.equal(upgraded.prepare('SELECT category_id FROM products').get().category_id, null);
   const product = upgraded.prepare("SELECT part_number, archived FROM products WHERE part_number = 'LEGACY-1'").get();
   assert.equal(product.archived, 0);
 });
@@ -256,7 +265,7 @@ test('desktop sections, product details and management links respect every role 
     assert.equal(products.includes('Agregar producto'), role !== 'viewer');
     assert.equal(products.includes('Importar productos'), role !== 'viewer');
     const inventory = await (await a.get('/inventory')).text();
-    assert.doesNotMatch(inventory, /name="archived"|Sin categoría|<th[^>]*>Marca/);
+    assert.doesNotMatch(inventory, /name="archived"|name="state"|<th[^>]*>Marca/);
     assert.match(inventory, /data-column="location" hidden/);
     assert.match(inventory, /data-column="minimum" hidden/);
     const detail = await a.get('/products/1');
@@ -278,5 +287,157 @@ test('desktop sections, product details and management links respect every role 
   for (const path of ['/products', '/inventory', '/purchase-orders', '/products/1']) {
     assert.equal((await a.get(path)).headers.get('location'), '/login');
   }
+});
+
+const rowIds = (html) => [...html.matchAll(/name="id" value="(\d+)"/g)].map((match) => Number(match[1]));
+
+test('categories are optional, assigned or created atomically, and editable only by management', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  const product = { csrfToken: a.csrfToken, partNumber: 'JUNTA', description: 'Junta de culata', presentation: 'KIT', minimumStock: '2' };
+  assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Sin categoría/);
+  assert.equal((await a.post('/products/1', { ...product, newCategory: ' Motor & agua ' })).status, 303);
+  assert.match(await (await a.get('/products/1')).text(), /Motor &amp; agua/);
+  assert.equal((await a.post('/products', { ...product, partNumber: 'NUEVO', categoryId: '1' })).status, 303);
+  assert.equal((await a.post('/products', { ...product, partNumber: 'OTRO', newCategory: 'motor & agua' })).status, 303);
+  const edit = await (await a.get('/products/1/edit')).text();
+  assert.match(edit, /value="1" selected>Motor &amp; agua/);
+  assert.equal([...edit.matchAll(/>Motor &amp; agua<\/option>/g)].length, 1);
+  for (const categoryId of ['9999', '-1', '1.5', '1x', '9007199254740992']) {
+    assert.equal((await a.post('/products/1', { ...product, categoryId })).status, 400);
+  }
+  assert.equal((await a.post('/products/1', { ...product, categoryId: '1', newCategory: 'Ambigua' })).status, 400);
+  assert.equal((await a.post('/products/1', { ...product, categoryId: '', newCategory: 'x'.repeat(101) })).status, 400);
+  assert.equal((await a.post('/products', { ...product, newCategory: 'No debe guardarse' })).status, 409);
+  assert.doesNotMatch(await (await a.get('/products/new')).text(), /No debe guardarse|Ambigua/);
+  assert.equal((await a.post('/products/1', { ...product, categoryId: '' })).status, 303);
+  assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Sin categoría/);
+  for (const role of ['manager', 'viewer']) {
+    assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: role, password: 'equipo-seguro-123', role })).status, 303);
+  }
+  const managerToken = await a.signIn('manager', 'equipo-seguro-123');
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: managerToken, categoryId: '1' })).status, 303);
+  const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: viewerToken, newCategory: 'Prohibida' })).status, 403);
+  assert.equal((await a.post('/products', { ...product, csrfToken: viewerToken, newCategory: 'Prohibida' })).status, 403);
+  assert.equal((await a.get('/products/1/edit')).status, 403);
+  assert.match(await (await a.get('/products/1')).text(), /Motor &amp; agua/);
+});
+
+test('combined catalog filters run before stable pagination, and inventory is always active-only', async (t) => {
+  const a = await app(t);
+  for (let index = 1; index <= 107; index++) {
+    assert.equal((await a.post('/products', {
+      csrfToken: a.csrfToken, partNumber: `P-${String(index).padStart(3, '0')}`, description: 'Bomba marina',
+      presentation: 'KIT', brand: 'Marca & uno', ...(index === 1 ? { newCategory: 'Motor' } : { categoryId: '1' }),
+    })).status, 303);
+  }
+  for (const partNumber of ['JUNTA', 'ANODO', 'KIT-BOMBA', 'FILTRO']) {
+    assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber, description: 'Otro artículo', presentation: 'unidad' })).status, 303);
+  }
+  for (const route of ['/products', '/inventory']) {
+    const query = 'q=bomba&category=1&brand=Marca+%26+uno&presentation=KIT&outOfStock=on';
+    const first = await (await a.get(`${route}?${query}`)).text();
+    assert.deepEqual(rowIds(first), Array.from({ length: 50 }, (_, i) => i + 1));
+    assert.match(first, /107 artículos · Página 1 de 3/);
+    const next = first.match(/href="([^"]+)">Siguiente/)[1].replaceAll('&amp;', '&');
+    assert.deepEqual(rowIds(await (await a.get(next)).text()), Array.from({ length: 50 }, (_, i) => i + 51));
+    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&page=3`)).text()), [101, 102, 103, 104, 105, 106, 107]);
+    assert.equal(rowIds(await (await a.get(`${route}?${query}&pageSize=25&page=2`)).text()).length, 25);
+    assert.equal(rowIds(await (await a.get(`${route}?${query}&pageSize=100`)).text()).length, 100);
+    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&page=999`)).text()), [101, 102, 103, 104, 105, 106, 107]);
+    assert.equal(rowIds(await (await a.get(`${route}?${query}&page=-2&pageSize=7`)).text()).length, 50);
+    assert.deepEqual(rowIds(await (await a.get(`${route}?category=none`)).text()), [109, 111, 108, 110]);
+    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&brand=missing`.replace('brand=Marca+%26+uno&', ''))).text()), []);
+  }
+  assert.equal((await a.post('/products/1/archive', { csrfToken: a.csrfToken })).status, 303);
+  assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [1]);
+  assert.ok(rowIds(await (await a.get('/products?state=all&q=P-001')).text()).includes(1));
+  assert.deepEqual(rowIds(await (await a.get('/inventory?state=all&q=P-001')).text()), []);
+  assert.deepEqual(rowIds(await (await a.get('/inventory?state=archived&q=P-001')).text()), []);
+});
+
+test('bulk archive validates the entire selection and permissions and preserves stock and history', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  const select = (ids, token = a.csrfToken) => new URLSearchParams([['csrfToken', token], ...ids.map((id) => ['id', String(id)])]);
+  for (const action of ['archive', 'restore']) {
+    for (const ids of [[], [1, 9999], [1, '2x'], [0], [-1], ['1.5'], ['9007199254740992'], Array(101).fill(1)]) {
+      assert.equal((await a.post(`/products/${action}`, select(ids))).status, 400);
+    }
+    assert.equal((await a.post(`/products/${action}`, select([1], 'invalid'))).status, 403);
+  }
+  assert.equal(rowIds(await (await a.get('/products')).text()).length, 4);
+  const history = await (await a.get('/products/3/history')).text();
+  assert.equal((await a.post('/products/archive', select([1, 3, 3]))).status, 303);
+  assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [1, 3]);
+  assert.match(await (await a.get('/products/3')).text(), /Existencias<\/dt><dd>2/);
+  assert.equal(await (await a.get('/products/3/history')).text(), history);
+  await a.post('/users', { csrfToken: a.csrfToken, username: 'manager', password: 'equipo-seguro-123', role: 'manager' });
+  await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' });
+  const managerToken = await a.signIn('manager', 'equipo-seguro-123');
+  assert.equal((await a.post('/products/restore', select([1, 3], managerToken))).status, 303);
+  const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
+  for (const action of ['archive', 'restore']) {
+    assert.equal((await a.post(`/products/${action}`, select([1, 3], viewerToken))).status, 403);
+  }
+  assert.doesNotMatch(await (await a.get('/products')).text(), /Archivar selección|Desarchivar selección/);
+  assert.equal(rowIds(await (await a.get('/products')).text()).length, 4);
+});
+
+test('categories and assignments survive restart and a verified full-state backup restore', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  const product = { partNumber: 'JUNTA', description: 'Junta de culata', presentation: 'KIT', minimumStock: '2' };
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: a.csrfToken, newCategory: 'Motor' })).status, 303);
+  await a.restart();
+  a.csrfToken = await a.signIn('admin', 'marina-segura-123');
+  assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Motor/);
+  assert.equal((await a.post('/backups', { csrfToken: a.csrfToken })).status, 303);
+  const listing = await (await a.get('/backups')).text();
+  assert.match(listing, /1 categorías/);
+  const file = listing.match(/href="\/backups\/restore\?file=([^"]+)"/)[1];
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: a.csrfToken, categoryId: '', newCategory: 'Posterior' })).status, 303);
+  await setStock(a, 3, 9);
+  const confirmation = await (await a.get(`/backups/restore?file=${file}`)).text();
+  assert.equal((await a.post('/backups/restore', { csrfToken: a.csrfToken, file, confirmationToken: a.token(confirmation, 'confirmationToken') })).status, 303);
+  assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Motor/);
+  assert.doesNotMatch(await (await a.get('/products/new')).text(), /Posterior/);
+  assert.match(await (await a.get('/products/3')).text(), /Existencias<\/dt><dd>2/);
+  assert.doesNotMatch(await (await a.get('/products/3/history')).text(), /<td>2<\/td><td>9<\/td>/);
+});
+
+test('migrating and restoring a pre-category database preserves accounts, articles, stock and history', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' });
+  const legacy = new DatabaseSync(a.databasePath);
+  legacy.exec('ALTER TABLE products DROP COLUMN category_id; DROP TABLE categories;');
+  const originalProducts = legacy.prepare('SELECT * FROM products ORDER BY id').all();
+  const originalUsers = legacy.prepare('SELECT * FROM users ORDER BY id').all();
+  const originalMovements = legacy.prepare('SELECT * FROM stock_movements ORDER BY id').all();
+  legacy.close();
+  // The backup endpoint also accepts the old schema before the next startup migrates it.
+  assert.equal((await a.post('/backups', { csrfToken: a.csrfToken })).status, 303);
+  const file = (await (await a.get('/backups')).text()).match(/href="\/backups\/restore\?file=([^"]+)"/)[1];
+  await a.restart();
+  a.csrfToken = await a.signIn('admin', 'marina-segura-123');
+  const checkState = () => {
+    const db = new DatabaseSync(a.databasePath, { readOnly: true });
+    try {
+      const products = db.prepare('SELECT * FROM products ORDER BY id').all();
+      assert.ok(products.every((product) => product.category_id === null));
+      assert.deepEqual(products.map(({ category_id, ...product }) => product), originalProducts.map((product) => ({ ...product })));
+      assert.deepEqual(db.prepare('SELECT * FROM users ORDER BY id').all(), originalUsers);
+      assert.deepEqual(db.prepare('SELECT * FROM stock_movements ORDER BY id').all(), originalMovements);
+    } finally { db.close(); }
+  };
+  checkState();
+  await a.post('/products/1', { csrfToken: a.csrfToken, partNumber: 'JUNTA', description: 'Modificado', presentation: 'KIT', newCategory: 'Posterior' });
+  const confirmation = await (await a.get(`/backups/restore?file=${file}`)).text();
+  assert.equal((await a.post('/backups/restore', { csrfToken: a.csrfToken, file, confirmationToken: a.token(confirmation, 'confirmationToken') })).status, 303);
+  checkState();
+  assert.doesNotMatch(await (await a.get('/products/new')).text(), /Posterior/);
+  assert.ok(await a.signIn('viewer', 'equipo-seguro-123'));
 });
 
