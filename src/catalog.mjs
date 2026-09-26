@@ -1,4 +1,4 @@
-import { findOrCreateNamed, findUser, insertProduct, setProductClassification, setProductImage, updateProduct } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, setProductArchived, setProductClassification, setProductImage, updateProduct } from './database.mjs';
 import { removeProductImage, storeProductImage } from './images.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock } from './stock.mjs';
@@ -11,9 +11,11 @@ export class CatalogError extends Error {
 }
 
 function requireManager(database, userId) {
-  if (!canManageInventory(findUser(database, userId)?.role)) {
+  const user = findUser(database, userId);
+  if (!canManageInventory(user?.role)) {
     throw new CatalogError('No tienes permiso para realizar esta operación.', 403);
   }
+  return user.role;
 }
 
 // Category, type and supplier share one grow-on-save mechanism: reuse an existing id or create
@@ -24,6 +26,7 @@ const NAMED_LISTS = {
     tooLongMessage: 'La categoría no puede superar los 100 caracteres.',
     conflictMessage: 'Elige una categoría existente o escribe una nueva.',
     invalidMessage: 'Elige una categoría válida.',
+    forbiddenMessage: 'Solo la cuenta administradora puede crear categorías.',
   },
   productType: {
     table: 'product_types',
@@ -39,7 +42,7 @@ const NAMED_LISTS = {
   },
 };
 
-function resolveNamedList(database, { table, tooLongMessage, conflictMessage, invalidMessage }, idInput, newInput, existingId) {
+function resolveNamedList(database, { table, tooLongMessage, conflictMessage, invalidMessage, forbiddenMessage }, idInput, newInput, existingId, canCreate = true) {
   const id = idInput ?? (existingId != null ? String(existingId) : '');
   const name = (newInput ?? '').trim();
   if (name.length > 100) throw new CatalogError(tooLongMessage);
@@ -51,7 +54,11 @@ function resolveNamedList(database, { table, tooLongMessage, conflictMessage, in
     }
     return Number(id);
   }
-  if (name) return findOrCreateNamed(database, table, name);
+  if (name) {
+    // Creating a category is reserved for administrators; types and suppliers stay open to management.
+    if (!canCreate) throw new CatalogError(forbiddenMessage ?? 'No tienes permiso para crear este valor.', 403);
+    return findOrCreateNamed(database, table, name);
+  }
   return null;
 }
 
@@ -60,8 +67,8 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
   database.exec('BEGIN IMMEDIATE');
   let writtenImage = null;
   try {
-    requireManager(database, userId);
-    const categoryId = resolveNamedList(database, NAMED_LISTS.category, form.get('categoryId'), form.get('newCategory'), existingProduct?.category_id);
+    const role = requireManager(database, userId);
+    const categoryId = resolveNamedList(database, NAMED_LISTS.category, form.get('categoryId'), form.get('newCategory'), existingProduct?.category_id, role === 'admin');
     const productTypeId = resolveNamedList(database, NAMED_LISTS.productType, form.get('productTypeId'), form.get('newProductType'), existingProduct?.product_type_id);
     const supplierId = resolveNamedList(database, NAMED_LISTS.supplier, form.get('supplierId'), form.get('newSupplier'), existingProduct?.supplier_id);
     const id = existingProduct?.id ?? Number(insertProduct(database, product).lastInsertRowid);
@@ -79,6 +86,8 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
     } else if (removeImage) {
       setProductImage(database, id, null);
     }
+    // Estado is part of the form now; an omitted value preserves the current state.
+    if (product.archivedProvided) setProductArchived(database, id, product.archived);
     if (!existingProduct && product.initialQuantity > 0) {
       recordStock(database, userId, { productId: id, operation: 'set', quantity: product.initialQuantity,
         previousQuantity: 0, newQuantity: product.initialQuantity, presentation: product.presentation, reason: null }, 'creation');

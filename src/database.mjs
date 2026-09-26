@@ -18,6 +18,18 @@ const STOCK_MOVEMENT_COLUMNS = `
       created_at TEXT NOT NULL,
       ${MOVEMENT_SOURCE_COLUMN}`;
 
+// The warehouse works with a fixed starter set of categories; more can only be added by an
+// administrator. They are ensured on every open and never remove an existing category.
+export const DEFAULT_CATEGORIES = [
+  'Motor base y componentes internos',
+  'Admisión, escape y sobrealimentación',
+  'Enfriamiento y agua de mar',
+  'Lubricación',
+  'Combustible e inyección',
+  'Eléctrico, arranque y control',
+  'Montaje y accesorios',
+];
+
 export function openDatabase(databasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -60,6 +72,8 @@ export function openDatabase(databasePath) {
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
   )`);
+  const seedCategory = database.prepare('INSERT INTO categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING');
+  for (const name of DEFAULT_CATEGORIES) seedCategory.run(name);
   // Product types and suppliers are named lists that grow on save, mirroring categories.
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_types (

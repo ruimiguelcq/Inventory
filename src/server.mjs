@@ -135,6 +135,7 @@ function productFrom(form, previous = {}) {
     new_product_type: form.get('newProductType') ?? '',
     supplier_id: form.get('supplierId') ?? previous.supplier_id ?? '',
     new_supplier: form.get('newSupplier') ?? '',
+    state: form.get('state') ?? (previous.archived ? 'archived' : 'active'),
   };
 }
 

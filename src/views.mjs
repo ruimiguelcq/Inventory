@@ -478,12 +478,42 @@ export function forbiddenPage(session) {
     <a class="button button-secondary" href="/inventory">Volver al inventario</a></section>`, session);
 }
 
+// A named list renders as a native <select> (the no-JS fallback and the submitted value) that
+// catalog.js upgrades into a searchable combobox with optional inline creation.
+function namedListCombo({ field, newField, newLabel, placeholder, searchPlaceholder, options, selectedId, canCreate, newValue = '' }) {
+  const selected = String(selectedId ?? '');
+  const optionMarkup = options.map((option) => `<option value="${option.id}" ${String(option.id) === selected ? 'selected' : ''}>${escapeHtml(option.name)}</option>`).join('');
+  return `<div class="combo" data-combo>
+    <select id="${field}" name="${field}" class="combo__native" data-combo-native>
+      <option value="">${escapeHtml(placeholder)}</option>
+      ${optionMarkup}
+    </select>
+    <div class="combo__widget" data-combo-widget hidden>
+      <button type="button" class="combo__toggle" data-combo-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="${escapeHtml(placeholder)}">
+        <span data-combo-label>${escapeHtml(placeholder)}</span>
+      </button>
+      <div class="combo__panel" data-combo-panel hidden>
+        <input type="search" class="combo__search" data-combo-search placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(searchPlaceholder)}">
+        <ul class="combo__list" role="listbox" data-combo-list></ul>
+        <p class="combo__empty" data-combo-empty hidden>Sin resultados.</p>
+        <button type="button" class="combo__add" data-combo-add hidden></button>
+      </div>
+    </div>
+    ${canCreate ? `<div class="field combo__create" data-combo-create>
+      <label for="${newField}">${escapeHtml(newLabel)}</label>
+      <input id="${newField}" name="${newField}" value="${escapeHtml(newValue)}" maxlength="100">
+      <p class="form-hint">Se crea y asigna al guardar, sin duplicar nombres equivalentes.</p>
+    </div>` : ''}
+  </div>`;
+}
+
 export function productFormPage({ product = {}, categories = [], productTypes = [], suppliers = [], error = '', isNew = true, ...session }) {
   const presentationOptions = `
     <option value="" disabled ${product.presentation ? '' : 'selected'}>Selecciona una presentación</option>
     ${PRESENTATIONS.map(([value, label]) => `<option value="${value}" ${product.presentation === value ? 'selected' : ''}>${label}</option>`).join('')}
   `;
   const priceValue = product.price ?? (product.price_cents != null ? formatCents(product.price_cents) : '');
+  const stateValue = product.state ?? (product.archived ? 'archived' : 'active');
   const action = isNew ? '/products' : `/products/${product.id}`;
   const title = isNew ? 'Añadir repuesto' : 'Editar repuesto';
   const content = `
@@ -492,114 +522,107 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
       ${!isNew ? `<div>Existencias: <strong>${product.quantity}</strong> · ${!product.archived ? `<a href="/products/${product.id}/stock">Ajustar existencias</a> · ` : ''}<a href="/products/${product.id}/history">Historial</a></div>` : ''}
     </div>
-    <form class="product-form" method="post" action="${action}" enctype="multipart/form-data">
+    <form class="product-form product-form--split" method="post" action="${action}" enctype="multipart/form-data">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
-      <section class="form-section">
-        <h2>Identificación</h2>
-        <p class="form-hint">P/N, Producto y Presentación son obligatorios. El estado por defecto es Activo.</p>
-        <div class="form-grid">
-          <div class="field field-wide">
-            <label for="partNumber">P/N <span class="required-mark">Obligatorio</span></label>
-            <input id="partNumber" name="partNumber" value="${escapeHtml(product.part_number ?? '')}" maxlength="100" required>
-          </div>
-          <div class="field field-wide">
-            <label for="description">Producto <span class="required-mark">Obligatorio</span></label>
-            <input id="description" name="description" value="${escapeHtml(product.description ?? '')}" maxlength="240" required>
-          </div>
-          <div class="field field-wide">
-            <label for="longDescription">Descripción <span class="optional-mark">Opcional</span></label>
-            <textarea id="longDescription" name="longDescription" rows="4" maxlength="${MAX_LONG_DESCRIPTION}">${escapeHtml(product.long_description ?? '')}</textarea>
-            <p class="form-hint">Texto plano para detalles más allá del nombre.</p>
-          </div>
-          <div class="field">
-            <label for="presentation">Presentación</label>
-            <select id="presentation" name="presentation" required>${presentationOptions}</select>
-          </div>
-          <div class="field">
-            <label for="price">Precio (USD) <span class="optional-mark">Opcional</span></label>
-            <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0.00">
-            <p class="form-hint">Dólares con dos decimales.</p>
-          </div>
+      <div class="product-layout">
+        <div class="product-layout__main">
+          <section class="form-section">
+            <h2>Identificación</h2>
+            <p class="form-hint">P/N, Producto y Presentación son obligatorios. El estado por defecto es Activo.</p>
+            <div class="form-grid">
+              <div class="field field-wide">
+                <label for="partNumber">P/N <span class="required-mark">Obligatorio</span></label>
+                <input id="partNumber" name="partNumber" value="${escapeHtml(product.part_number ?? '')}" maxlength="100" required>
+              </div>
+              <div class="field field-wide">
+                <label for="description">Producto <span class="required-mark">Obligatorio</span></label>
+                <input id="description" name="description" value="${escapeHtml(product.description ?? '')}" maxlength="240" required>
+              </div>
+            </div>
+          </section>
+          <section class="form-section">
+            <h2>Descripción</h2>
+            <div class="field field-wide">
+              <label for="longDescription">Descripción larga <span class="optional-mark">Opcional</span></label>
+              <textarea id="longDescription" name="longDescription" rows="4" maxlength="${MAX_LONG_DESCRIPTION}">${escapeHtml(product.long_description ?? '')}</textarea>
+              <p class="form-hint">Texto plano para detalles más allá del nombre.</p>
+            </div>
+            <h3 class="media-title">Imagen</h3>
+            <div class="media-box">
+              ${product.image_filename ? `<div class="media-box__current">
+                <img class="product-image-preview" src="/products/${product.id}/image" alt="Imagen actual de ${escapeHtml(product.description ?? '')}">
+                <label class="filter-check"><input type="checkbox" name="removeImage"> Quitar la imagen actual</label>
+              </div>` : ''}
+              <label class="media-box__drop" for="image">
+                <span class="media-box__action">${product.image_filename ? 'Cambiar imagen' : 'Subir nuevo'}</span>
+                <span class="media-box__hint">JPG, PNG o WEBP de hasta 2 MB</span>
+                <span class="media-box__note" data-image-name></span>
+              </label>
+              <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp" class="media-box__input">
+            </div>
+          </section>
+          <section class="form-section">
+            <h2>Categoría</h2>
+            ${namedListCombo({ field: 'categoryId', newField: 'newCategory', newLabel: 'Crear categoría', placeholder: 'Sin categoría', searchPlaceholder: 'Buscar categorías', options: categories, selectedId: product.category_id, canCreate: session.role === 'admin', newValue: product.new_category ?? '' })}
+          </section>
+          <section class="form-section">
+            <h2>Precio y presentación</h2>
+            <div class="form-grid">
+              <div class="field">
+                <label for="presentation">Presentación</label>
+                <select id="presentation" name="presentation" required>${presentationOptions}</select>
+              </div>
+              <div class="field">
+                <label for="price">Precio (USD) <span class="optional-mark">Opcional</span></label>
+                <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0.00">
+                <p class="form-hint">Dólares con dos decimales.</p>
+              </div>
+            </div>
+          </section>
+          <section class="form-section">
+            <h2>Inventario</h2>
+            <p class="form-hint">La ubicación puede ser un estante, una caja u otra referencia interna.</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="location">Ubicación principal <span class="optional-mark">Opcional</span></label>
+                <input id="location" name="location" value="${escapeHtml(product.location ?? '')}" maxlength="120">
+              </div>
+              <div class="field">
+                <label for="minimumStock">Mínimo de stock <span class="optional-mark">Opcional</span></label>
+                <input id="minimumStock" name="minimumStock" type="number" min="0" step="1" value="${escapeHtml(product.minimum_stock ?? '')}">
+              </div>
+              ${isNew ? `<div class="field">
+                <label for="initialQuantity">Cantidad inicial <span class="optional-mark">Opcional</span></label>
+                <input id="initialQuantity" name="initialQuantity" type="number" min="0" step="1" value="${escapeHtml(product.initial_quantity ?? '')}">
+                <p class="form-hint">Se registra en el historial como movimiento de alta.</p>
+              </div>` : ''}
+            </div>
+          </section>
         </div>
-      </section>
-      <section class="form-section">
-        <h2>Imagen</h2>
-        <p class="form-hint">Una imagen por producto: JPG, PNG o WEBP de hasta 2 MB. Puedes cambiarla o quitarla.</p>
-        ${product.image_filename ? `<div class="current-image">
-          <img class="product-image-preview" src="/products/${product.id}/image" alt="Imagen actual de ${escapeHtml(product.description ?? '')}">
-          <label class="filter-check"><input type="checkbox" name="removeImage"> Quitar la imagen actual</label>
-        </div>` : ''}
-        <div class="form-grid"><div class="field field-wide">
-          <label for="image">${product.image_filename ? 'Cambiar imagen' : 'Añadir imagen'} <span class="optional-mark">Opcional</span></label>
-          <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
-        </div></div>
-      </section>
-      <section class="form-section">
-        <h2>Clasificación</h2>
-        <p class="form-hint">Las listas crecen al guardar: elige una existente o escribe una nueva.</p>
-        <div class="form-grid">
-          <div class="field">
-            <label for="categoryId">Categoría <span class="optional-mark">Opcional</span></label>
-            <select id="categoryId" name="categoryId">
-              <option value="">Sin categoría</option>
-              ${categories.map((category) => `<option value="${category.id}" ${String(product.category_id) === String(category.id) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label for="newCategory">Crear categoría</label>
-            <input id="newCategory" name="newCategory" value="${escapeHtml(product.new_category ?? '')}" maxlength="100" aria-describedby="category-help">
-            <p id="category-help" class="form-hint">Elige Sin categoría para crear y asignar una nueva al guardar.</p>
-          </div>
-          <div class="field">
-            <label for="productTypeId">Tipo de producto <span class="optional-mark">Opcional</span></label>
-            <select id="productTypeId" name="productTypeId">
-              <option value="">Sin tipo</option>
-              ${productTypes.map((type) => `<option value="${type.id}" ${String(product.product_type_id) === String(type.id) ? 'selected' : ''}>${escapeHtml(type.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label for="newProductType">Crear tipo de producto</label>
-            <input id="newProductType" name="newProductType" value="${escapeHtml(product.new_product_type ?? '')}" maxlength="100">
-            <p class="form-hint">Elige Sin tipo para crear y asignar uno nuevo al guardar.</p>
-          </div>
-          <div class="field">
-            <label for="supplierId">Proveedor <span class="optional-mark">Opcional</span></label>
-            <select id="supplierId" name="supplierId">
-              <option value="">Sin proveedor</option>
-              ${suppliers.map((supplier) => `<option value="${supplier.id}" ${String(product.supplier_id) === String(supplier.id) ? 'selected' : ''}>${escapeHtml(supplier.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label for="newSupplier">Crear proveedor</label>
-            <input id="newSupplier" name="newSupplier" value="${escapeHtml(product.new_supplier ?? '')}" maxlength="100">
-            <p class="form-hint">Elige Sin proveedor para crear y asignar uno nuevo al guardar.</p>
-          </div>
-          <div class="field">
-            <label for="brand">Marca <span class="optional-mark">Opcional</span></label>
-            <input id="brand" name="brand" value="${escapeHtml(product.brand ?? '')}" maxlength="100">
-          </div>
-        </div>
-      </section>
-      <section class="form-section">
-        <h2>Almacén</h2>
-        <p class="form-hint">La ubicación puede ser un estante, una caja u otra referencia interna.</p>
-        <div class="form-grid">
-          <div class="field">
-            <label for="location">Ubicación principal <span class="optional-mark">Opcional</span></label>
-            <input id="location" name="location" value="${escapeHtml(product.location ?? '')}" maxlength="120">
-          </div>
-          <div class="field">
-            <label for="minimumStock">Mínimo de stock <span class="optional-mark">Opcional</span></label>
-            <input id="minimumStock" name="minimumStock" type="number" min="0" step="1" value="${escapeHtml(product.minimum_stock ?? '')}">
-          </div>
-          ${isNew ? `<div class="field">
-            <label for="initialQuantity">Cantidad inicial <span class="optional-mark">Opcional</span></label>
-            <input id="initialQuantity" name="initialQuantity" type="number" min="0" step="1" value="${escapeHtml(product.initial_quantity ?? '')}">
-            <p class="form-hint">Se registra en el historial como movimiento de alta.</p>
-          </div>` : ''}
-        </div>
-      </section>
+        <aside class="product-layout__side">
+          <section class="form-section">
+            <h2>Estado</h2>
+            <div class="field">
+              <label for="state">Estado del producto</label>
+              <select id="state" name="state">
+                <option value="active" ${stateValue !== 'archived' ? 'selected' : ''}>Activo</option>
+                <option value="archived" ${stateValue === 'archived' ? 'selected' : ''}>Archivado</option>
+              </select>
+              <p class="form-hint">Los archivados no aparecen en el inventario activo.</p>
+            </div>
+          </section>
+          <section class="form-section">
+            <h2>Organización del producto</h2>
+            ${namedListCombo({ field: 'productTypeId', newField: 'newProductType', newLabel: 'Crear tipo de producto', placeholder: 'Sin tipo', searchPlaceholder: 'Buscar o agregar tipo de producto', options: productTypes, selectedId: product.product_type_id, canCreate: true, newValue: product.new_product_type ?? '' })}
+            ${namedListCombo({ field: 'supplierId', newField: 'newSupplier', newLabel: 'Crear proveedor', placeholder: 'Sin proveedor', searchPlaceholder: 'Buscar o agregar proveedor', options: suppliers, selectedId: product.supplier_id, canCreate: true, newValue: product.new_supplier ?? '' })}
+            <div class="field">
+              <label for="brand">Marca <span class="optional-mark">Opcional</span></label>
+              <input id="brand" name="brand" value="${escapeHtml(product.brand ?? '')}" maxlength="100">
+            </div>
+          </section>
+        </aside>
+      </div>
       <div class="form-actions">
         <a class="button button-quiet" href="/products">Cancelar</a>
         <button class="button button-primary" type="submit">Guardar repuesto</button>

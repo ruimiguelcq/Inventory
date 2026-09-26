@@ -394,25 +394,30 @@ test('categories are optional, assigned or created atomically, and editable only
   assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Sin categoría/);
   assert.equal((await a.post('/products/1', { ...product, newCategory: ' Motor & agua ' })).status, 303);
   assert.match(await (await a.get('/products/1')).text(), /Motor &amp; agua/);
-  assert.equal((await a.post('/products', { ...product, partNumber: 'NUEVO', categoryId: '1' })).status, 303);
-  assert.equal((await a.post('/products', { ...product, partNumber: 'OTRO', newCategory: 'motor & agua' })).status, 303);
   const edit = await (await a.get('/products/1/edit')).text();
-  assert.match(edit, /value="1" selected>Motor &amp; agua/);
+  const categoryId = edit.match(/value="(\d+)" selected>Motor &amp; agua/)[1];
+  assert.ok(categoryId, 'the created category keeps its selected option');
+  assert.equal((await a.post('/products', { ...product, partNumber: 'NUEVO', categoryId })).status, 303);
+  assert.equal((await a.post('/products', { ...product, partNumber: 'OTRO', newCategory: 'motor & agua' })).status, 303);
+  assert.match(edit, new RegExp(`value="${categoryId}" selected>Motor &amp; agua`));
   assert.equal([...edit.matchAll(/>Motor &amp; agua<\/option>/g)].length, 1);
-  for (const categoryId of ['9999', '-1', '1.5', '1x', '9007199254740992']) {
-    assert.equal((await a.post('/products/1', { ...product, categoryId })).status, 400);
+  for (const invalidId of ['9999', '-1', '1.5', '1x', '9007199254740992']) {
+    assert.equal((await a.post('/products/1', { ...product, categoryId: invalidId })).status, 400);
   }
-  assert.equal((await a.post('/products/1', { ...product, categoryId: '1', newCategory: 'Ambigua' })).status, 400);
+  assert.equal((await a.post('/products/1', { ...product, categoryId, newCategory: 'Ambigua' })).status, 400);
   assert.equal((await a.post('/products/1', { ...product, categoryId: '', newCategory: 'x'.repeat(101) })).status, 400);
   assert.equal((await a.post('/products', { ...product, newCategory: 'No debe guardarse' })).status, 409);
   assert.doesNotMatch(await (await a.get('/products/new')).text(), /No debe guardarse|Ambigua/);
   assert.equal((await a.post('/products/1', { ...product, categoryId: '' })).status, 303);
   assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Sin categoría/);
+  // The starter categories ship with the app; a manager can assign one, but only an admin adds more.
+  assert.match(await (await a.get('/products/new')).text(), /Motor base y componentes internos/);
   for (const role of ['manager', 'viewer']) {
     assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: role, password: 'equipo-seguro-123', role })).status, 303);
   }
   const managerToken = await a.signIn('manager', 'equipo-seguro-123');
-  assert.equal((await a.post('/products/1', { ...product, csrfToken: managerToken, categoryId: '1' })).status, 303);
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: managerToken, categoryId })).status, 303);
+  assert.equal((await a.post('/products/1', { ...product, csrfToken: managerToken, categoryId: '', newCategory: 'Solo admin' })).status, 403);
   const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
   assert.equal((await a.post('/products/1', { ...product, csrfToken: viewerToken, newCategory: 'Prohibida' })).status, 403);
   assert.equal((await a.post('/products', { ...product, csrfToken: viewerToken, newCategory: 'Prohibida' })).status, 403);
@@ -460,7 +465,7 @@ test('categories and assignments survive restart and a verified full-state backu
   assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Motor/);
   assert.equal((await a.post('/backups', { csrfToken: a.csrfToken })).status, 303);
   const listing = await (await a.get('/backups')).text();
-  assert.match(listing, /1 categorías/);
+  assert.match(listing, /8 categorías/);
   const file = listing.match(/href="\/backups\/restore\?file=([^"]+)"/)[1];
   assert.equal((await a.post('/products/1', { ...product, csrfToken: a.csrfToken, categoryId: '', newCategory: 'Posterior' })).status, 303);
   await setStock(a, 3, 9);

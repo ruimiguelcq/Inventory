@@ -75,3 +75,100 @@ for (const form of document.querySelectorAll('[data-instant-search]')) {
     refresh();
   });
 }
+
+// Named-list combobox: each server-rendered <select> gains a searchable panel that can also
+// create a value. Choosing writes the select value; creating writes the paired text input and
+// clears the select, so the form keeps submitting the same fields (and still works without JS).
+for (const combo of document.querySelectorAll('[data-combo]')) {
+  const select = combo.querySelector('[data-combo-native]');
+  const widget = combo.querySelector('[data-combo-widget]');
+  const toggle = combo.querySelector('[data-combo-toggle]');
+  const label = combo.querySelector('[data-combo-label]');
+  const panel = combo.querySelector('[data-combo-panel]');
+  const search = combo.querySelector('[data-combo-search]');
+  const list = combo.querySelector('[data-combo-list]');
+  const empty = combo.querySelector('[data-combo-empty]');
+  const add = combo.querySelector('[data-combo-add]');
+  const createWrap = combo.querySelector('[data-combo-create]');
+  const createInput = createWrap ? createWrap.querySelector('input') : null;
+  if (!select || !widget || !toggle || !label || !panel || !list || !empty || !add) continue;
+  const options = [...select.options].map((option) => ({ value: option.value, text: option.textContent.trim() }));
+
+  const syncLabel = () => {
+    const created = createInput ? createInput.value.trim() : '';
+    const current = options.find((option) => option.value === select.value);
+    label.textContent = created && !select.value ? created : (current ? current.text : (options[0] ? options[0].text : ''));
+  };
+  const close = () => {
+    panel.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+  };
+  const render = (rawQuery) => {
+    const query = rawQuery.trim().toLowerCase();
+    list.replaceChildren();
+    let shown = 0;
+    for (const option of options) {
+      if (query && !option.text.toLowerCase().includes(query)) continue;
+      const item = document.createElement('li');
+      item.textContent = option.text;
+      item.setAttribute('role', 'option');
+      item.dataset.value = option.value;
+      if (option.value === select.value) item.setAttribute('aria-selected', 'true');
+      list.append(item);
+      shown++;
+    }
+    empty.hidden = shown > 0;
+    const exact = options.some((option) => option.text.toLowerCase() === query);
+    if (createInput && query && !exact) {
+      add.hidden = false;
+      add.textContent = `Añadir «${rawQuery.trim()}»`;
+    } else {
+      add.hidden = true;
+    }
+  };
+  const open = () => {
+    panel.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    search.value = '';
+    render('');
+    search.focus();
+  };
+
+  widget.hidden = false;
+  combo.dataset.comboReady = 'true';
+  syncLabel();
+
+  toggle.addEventListener('click', () => (panel.hidden ? open() : close()));
+  search.addEventListener('input', () => render(search.value));
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    close();
+    toggle.focus();
+  });
+  list.addEventListener('click', (event) => {
+    const item = event.target.closest('li[data-value]');
+    if (!item) return;
+    select.value = item.dataset.value;
+    if (createInput) createInput.value = '';
+    syncLabel();
+    close();
+  });
+  add.addEventListener('click', () => {
+    if (!createInput) return;
+    createInput.value = search.value.trim();
+    select.value = '';
+    syncLabel();
+    close();
+  });
+  document.addEventListener('click', (event) => {
+    if (!combo.contains(event.target)) close();
+  });
+}
+
+// Show the chosen file name inside the media box so the upload reads like Shopify's drop zone.
+for (const input of document.querySelectorAll('.media-box__input')) {
+  input.addEventListener('change', () => {
+    const note = input.closest('.media-box') ? input.closest('.media-box').querySelector('[data-image-name]') : null;
+    if (note) note.textContent = input.files && input.files[0] ? input.files[0].name : '';
+  });
+}

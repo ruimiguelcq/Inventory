@@ -138,16 +138,21 @@ test('Inventario exports only P/N, name and quantity for active articles', async
 
 test('both exports cover every filtered page and never fall back to the full catalog', async (t) => {
   const a = await app(t);
-  for (let index = 1; index <= 55; index++) {
+  assert.equal((await a.post('/products', {
+    csrfToken: a.csrfToken, partNumber: 'P-001', description: 'Bomba marina', presentation: 'KIT', newCategory: 'Motor',
+  })).status, 303);
+  const categoryId = (await (await a.get('/products/1/edit')).text()).match(/value="(\d+)" selected>Motor/)?.[1];
+  assert.ok(categoryId, 'the created category id is available');
+  for (let index = 2; index <= 55; index++) {
     assert.equal((await a.post('/products', {
       csrfToken: a.csrfToken, partNumber: `P-${String(index).padStart(3, '0')}`,
-      description: 'Bomba marina', presentation: 'KIT', ...(index === 1 ? { newCategory: 'Motor' } : { categoryId: '1' }),
+      description: 'Bomba marina', presentation: 'KIT', categoryId,
     })).status, 303);
   }
   for (const partNumber of ['OTRO-1', 'OTRO-2', 'OTRO-3']) {
     assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber, description: 'Ánodo de sacrificio', presentation: 'unidad' })).status, 303);
   }
-  const page = await (await a.get('/products?q=bomba&category=1')).text();
+  const page = await (await a.get(`/products?q=bomba&category=${categoryId}`)).text();
   assert.equal([...page.matchAll(/class="product-description"/g)].length, 50);
   const allProducts = await download(await a.get(viewLink(page, 'Exportar')), 'productos.xlsx');
   assert.equal(allProducts.sheet.rowCount, 56);

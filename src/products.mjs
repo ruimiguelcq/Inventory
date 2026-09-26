@@ -30,10 +30,12 @@ export function validateProduct(form) {
   const priceInput = form.get('price');
   const longDescription = (longDescriptionInput ?? '').trim();
   const initialInput = (form.get('initialQuantity') ?? '').trim();
+  const stateInput = form.get('state');
   const product = { partNumber, description, presentation, brand: brand || null,
     location: location || null, minimumStock: minimumInput === '' ? null : Number(minimumInput),
     longDescription: longDescription || null, longDescriptionProvided: longDescriptionInput !== null,
-    priceCents: null, priceProvided: priceInput !== null, initialQuantity: initialInput === '' ? 0 : Number(initialInput) };
+    priceCents: null, priceProvided: priceInput !== null, initialQuantity: initialInput === '' ? 0 : Number(initialInput),
+    archivedProvided: stateInput !== null && stateInput !== '', archived: stateInput === 'archived' };
   if (!partNumber || partNumber.length > 100) return { error: 'Escribe un P/N de hasta 100 caracteres.', product };
   if (!description || description.length > 240) return { error: 'Escribe un nombre de producto de hasta 240 caracteres.', product };
   if (!PRESENTATIONS.includes(presentation)) return { error: 'Elige una presentación válida: Set, Kit o Unidad.', product };
@@ -46,6 +48,9 @@ export function validateProduct(form) {
   const price = parsePrice(priceInput);
   if (price.error) return { error: price.error, product };
   product.priceCents = price.cents;
+  if (stateInput !== null && stateInput !== '' && !['active', 'archived'].includes(stateInput)) {
+    return { error: 'Elige un estado válido: Activo o Archivado.', product };
+  }
   if (initialInput !== '' && (!Number.isSafeInteger(product.initialQuantity) || product.initialQuantity < 0)) {
     return { error: 'La cantidad inicial debe ser un número entero igual o mayor que cero.', product };
   }

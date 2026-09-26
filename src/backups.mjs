@@ -3,6 +3,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, r
 import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { countImages } from './images.mjs';
+import { DEFAULT_CATEGORIES } from './database.mjs';
 
 export const DEFAULT_BACKUP_RETENTION = 10;
 export const DEFAULT_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -52,15 +53,27 @@ function tableCount(database, name) {
   return exists ? database.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get().count : 0;
 }
 
+// Opening a restored database seeds the starter categories, so a snapshot is measured by the
+// count it will have after restoring: its own categories plus any starter one it is missing.
+function categoryCount(database) {
+  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'categories'").get()) {
+    return DEFAULT_CATEGORIES.length;
+  }
+  const present = new Set(database.prepare('SELECT name FROM categories').all().map((row) => row.name.toLowerCase()));
+  const missing = DEFAULT_CATEGORIES.filter((name) => !present.has(name.toLowerCase())).length;
+  return present.size + missing;
+}
+
 function inspectCounts(database) {
   const counts = database.prepare(`SELECT
     (SELECT COUNT(*) FROM products) AS products,
     (SELECT COUNT(*) FROM stock_movements) AS movements,
     (SELECT COUNT(*) FROM users) AS users`).get();
-  // Snapshots from before categories and purchases remain valid restore points; migration adds empty tables.
+  // Snapshots from before categories and purchases remain valid restore points; migration adds
+  // empty tables and the starter categories.
   return {
     ...counts,
-    categories: tableCount(database, 'categories'),
+    categories: categoryCount(database),
     purchaseOrders: tableCount(database, 'purchase_orders'),
     purchaseOrderLines: tableCount(database, 'purchase_order_lines'),
   };

@@ -501,6 +501,91 @@ button.text-link {
 
 button.text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
+/* Two-column product form: main fields plus a sidebar for Estado and Organización. */
+.product-form--split {
+  max-width: 1060px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.product-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.product-layout__main, .product-layout__side { display: flex; flex-direction: column; gap: 18px; }
+.product-layout .form-section {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 2px 6px rgb(21 47 62 / 4%);
+}
+.product-layout__side .form-section { padding: 20px; }
+.product-form--split .form-actions {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 2px 6px rgb(21 47 62 / 4%);
+}
+.media-title { margin: 18px 0 10px; font-size: 14px; font-weight: 650; }
+.media-box { display: grid; gap: 12px; }
+.media-box__current { display: flex; flex-direction: column; gap: 10px; }
+.media-box__drop {
+  display: flex;
+  min-height: 128px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: #fafbfb;
+  text-align: center;
+  cursor: pointer;
+}
+.media-box__drop:hover { border-color: #8499a4; background: #f4f8f8; }
+.media-box__action { font-weight: 600; color: #235b57; }
+.media-box__hint, .media-box__note { color: var(--muted); font-size: 12px; }
+.media-box__input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.combo { position: relative; display: flex; flex-direction: column; gap: 13px; }
+.combo + .combo, .combo + .field, .field + .combo { margin-top: 15px; }
+.combo[data-combo-ready="true"] .combo__native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.combo[data-combo-ready="true"] .combo__create { display: none; }
+.combo__widget { position: relative; }
+.combo__toggle {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid #bccbd2;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.combo__toggle::after { content: "\25BE"; color: var(--muted); }
+.combo__panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgb(21 47 62 / 14%);
+}
+.combo__search { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid #bccbd2; border-radius: 5px; }
+.combo__list { max-height: 240px; margin: 8px 0 0; padding: 0; overflow: auto; list-style: none; }
+.combo__list li { padding: 8px 10px; border-radius: 4px; cursor: pointer; }
+.combo__list li:hover, .combo__list li[aria-selected="true"] { background: var(--sea-soft); }
+.combo__empty { margin: 8px 0 0; padding: 8px 10px; color: var(--muted); font-size: 13px; }
+.combo__add { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: #235b57; font-weight: 600; text-align: left; cursor: pointer; }
+.combo__add:hover { background: var(--sea-soft); }
+
 @media (max-width: 760px) {
   .sidebar { width: 170px; padding-inline: 8px; }
   .authenticated .page-shell { margin-left: 170px; padding: 24px 16px; }
@@ -514,6 +599,7 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
   .page-heading > .button { flex-shrink: 0; }
   .auth-layout { min-height: auto; grid-template-columns: 1fr; gap: 29px; padding-top: 35px; }
   .auth-intro h1 { font-size: 34px; }
+  .product-layout { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 500px) {
