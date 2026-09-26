@@ -21,8 +21,8 @@ import {
 import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { catalogState, filterProducts, paginateProducts, validateProduct } from './products.mjs';
 import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
-import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
-import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
+import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
+import { exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
@@ -335,22 +335,27 @@ export function createInventoryServer({
       if (['GET', 'POST'].includes(request.method) && url.pathname === '/exports') {
         const params = request.method === 'POST' ? await readForm(request, 2 * 1024 * 1024) : url.searchParams;
         if (request.method === 'POST' && !validateCsrf(params, session)) return sendHtml(response, forbiddenPage(session), 403);
-        const products = listProducts(database);
-        let selected;
+        let view = 'inventory';
         try {
-          selected = selectExportProducts(products, params);
+          view = parseExportView(params);
+          const viewParams = new URLSearchParams(params);
+          // Inventory only ever exports active articles; products honors its state filter.
+          if (view === 'inventory') viewParams.set('state', 'active');
+          const selected = selectExportProducts(listProducts(database), viewParams);
+          const buffer = await exportView(selected, view);
+          response.writeHead(200, {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': `attachment; filename="${view === 'products' ? 'productos.xlsx' : 'inventario.xlsx'}"`,
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          });
+          return response.end(buffer);
         } catch (error) {
           if (!(error instanceof ExportError)) throw error;
-          return sendHtml(response, inventoryPage({ ...session, ...catalogOptions(new URLSearchParams(), true), message: error.message }), 400);
+          const render = view === 'products' ? productsPage : inventoryPage;
+          const fallback = new URLSearchParams(params);
+          return sendHtml(response, render({ ...session, ...catalogOptions(fallback, view === 'inventory'), message: error.message }), 400);
         }
-        const buffer = await exportInventory(selected);
-        response.writeHead(200, {
-          'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'content-disposition': 'attachment; filename="inventario.xlsx"',
-          'cache-control': 'no-store',
-          'x-content-type-options': 'nosniff',
-        });
-        return response.end(buffer);
       }
 
       // Every private mutation requires gestión, including future stock/archive routes.
@@ -485,31 +490,38 @@ export function createInventoryServer({
         if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
         const storedSession = sessions.get(session.id);
         if (request.method === 'GET' && url.pathname === '/imports') {
-          return sendHtml(response, importPage(session));
+          try {
+            return sendHtml(response, importPage({ ...session, view: parseImportView(url.searchParams) }));
+          } catch (error) {
+            if (!(error instanceof ImportError)) throw error;
+            return sendHtml(response, importPage({ ...session, error: error.message }), error.status);
+          }
         }
         if (request.method === 'POST') {
           const initialGeneration = storedSession.importGeneration ?? 0;
+          let view = 'inventory';
           try {
             const form = url.pathname === '/imports' ? await readImportForm(request) : await readForm(request);
             if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+            view = parseImportView(form);
             if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
             if (url.pathname === '/imports/cancel') {
               storedSession.importGeneration = (storedSession.importGeneration ?? 0) + 1;
               delete storedSession.importReview;
-              return redirect(response, '/inventory');
+              return redirect(response, view === 'products' ? '/products' : '/inventory');
             }
             if (url.pathname === '/imports') {
               if ((storedSession.importGeneration ?? 0) !== initialGeneration) throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
               const generation = initialGeneration + 1;
               storedSession.importGeneration = generation;
-              const review = await previewImport(database, form);
+              const review = await previewImport(database, form, view);
               if (storedSession.importGeneration !== generation || sessions.get(session.id) !== storedSession) {
                 throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
               }
               if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
               const confirmationToken = randomBytes(32).toString('base64url');
               if (!review.rows.some((row) => row.errors.length)) storedSession.importReview = { review, confirmationToken };
-              return sendHtml(response, importPage({ ...session, review, confirmationToken }));
+              return sendHtml(response, importPage({ ...session, review, confirmationToken, view }));
             }
             const pending = storedSession.importReview;
             if (!pending || !matchesToken(form.get('confirmationToken') ?? '', pending.confirmationToken)) {
@@ -517,10 +529,10 @@ export function createInventoryServer({
             }
             delete storedSession.importReview;
             applyImport(database, session.userId, pending.review);
-            return redirect(response, '/inventory?imported=1');
+            return redirect(response, pending.review.view === 'products' ? '/products?imported=1' : '/inventory?imported=1');
           } catch (error) {
             if (!(error instanceof ImportError)) throw error;
-            return sendHtml(response, importPage({ ...session, error: error.message }), error.status);
+            return sendHtml(response, importPage({ ...session, view, error: error.message }), error.status);
           }
         }
       }
