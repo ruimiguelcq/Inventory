@@ -13,6 +13,12 @@ export function escapeHtml(value = '') {
   })[character]);
 }
 
+// Shared stock marker: zero wins as agotado, then a positive quantity at or below the minimum.
+function stockBadge(status) {
+  return status === 'agotado' ? '<span class="badge badge-out">Agotado</span>'
+    : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
+}
+
 function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
   const navigation = username ? `
     <header class="topbar">
@@ -123,10 +129,6 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   exportParams.set('scope', 'all');
   const exportHref = `/exports?${exportParams.toString()}`;
 
-  const badgeOf = (status) => status === 'agotado'
-    ? '<span class="badge badge-out">Agotado</span>'
-    : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
-
   const stockActions = (product) => {
     const history = `<a href="/products/${product.id}/history">Historial</a>`;
     if (!canManage) return history;
@@ -148,7 +150,7 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
       <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
       ${inventory ? '' : `<td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>`}
-      <td class="quantity-cell">${product.quantity}${status ? ` ${badgeOf(status)}` : ''}</td>
+      <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
       ${inventory ? `<td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
         <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>` : `<td class="muted">${escapeHtml(product.category_name ?? 'Sin categoría')}</td>
         <td>${escapeHtml(product.presentation)}</td><td>${escapeHtml(product.brand || '—')}</td>`}
@@ -268,11 +270,119 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   return page(title, content, { ...session, active: inventory ? 'inventory' : 'products' });
 }
 
-export function purchaseOrdersPage(session) {
-  return page('Órdenes de compra', `<div class="page-heading"><h1>Órdenes de compra</h1></div>
-    <section class="inventory-panel empty-state"><h2>Órdenes de compra, próximamente</h2>
-      <p>Esta sección todavía no permite crear ni gestionar compras.</p>
-      <a class="button button-secondary" href="/inventory">Consultar inventario</a></section>`, { ...session, active: 'purchases' });
+function formatTimestamp(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  return /Z$/i.test(text) ? formatUtc(text) : `${text.replace('T', ' ')} UTC`;
+}
+
+function timestampAttribute(value) {
+  return String(value ?? '').replace(' ', 'T');
+}
+
+export function purchaseOrdersPage({ orders = [], error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const createForm = `<form method="post" action="/purchase-orders">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      <button class="button button-primary" type="submit">Nueva lista de compra</button>
+    </form>`;
+  const rows = orders.map((order) => `<tr>
+    <td class="part-number"><a href="/purchase-orders/${order.id}">Compra #${order.id}</a></td>
+    <td><time datetime="${escapeHtml(timestampAttribute(order.created_at))}">${escapeHtml(formatTimestamp(order.created_at))}</time></td>
+    <td><span class="status-tag">${order.status === 'archived' ? 'Archivada' : 'Borrador'}</span></td>
+    <td class="quantity-cell" title="${order.ready_count} con cantidad de ${order.line_count} artículos">${order.ready_count}/${order.line_count}</td>
+    <td><a href="/purchase-orders/${order.id}">${canManage ? 'Editar' : 'Ver'}</a></td>
+  </tr>`).join('');
+
+  const content = `
+    <div class="page-heading">
+      <div><p class="eyebrow">Compras</p><h1>Órdenes de compra</h1>
+        <p class="page-subtitle">Prepara los repuestos a pedir. Guardar un borrador no cambia las existencias ni crea movimientos.</p></div>
+      ${canManage ? createForm : ''}
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <section class="inventory-panel" aria-label="Listas de compra">
+      ${orders.length ? `<div class="table-scroll"><table><thead><tr>
+        <th scope="col">Número</th><th scope="col">Fecha (UTC)</th><th scope="col">Estado</th>
+        <th scope="col" class="align-right">Artículos</th><th scope="col"><span class="visually-hidden">Acciones</span></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty-state">
+        <span class="empty-icon" aria-hidden="true">⌁</span>
+        <h3>Todavía no hay listas de compra</h3>
+        <p>${canManage ? 'Crea una lista y añade los repuestos que necesitas pedir.' : 'Cuando Gestión cree una lista, aparecerá aquí.'}</p>
+      </div>`}
+    </section>`;
+  return page('Órdenes de compra', content, { ...session, active: 'purchases' });
+}
+
+export function purchaseOrderPage({ order, lines = [], products = [], values = {}, error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const inList = new Set(lines.map((line) => line.id));
+  const available = products.filter((product) => !inList.has(product.id));
+  const options = available.map((product) => {
+    const status = stockStatus(product);
+    const note = status === 'agotado' ? ' · Agotado' : status === 'stockbajo' ? ' · Stock bajo' : '';
+    return `<option value="${product.id}">${escapeHtml(product.part_number)} — ${escapeHtml(product.description)} · ${product.quantity}${note}</option>`;
+  }).join('');
+  const rows = lines.map((line) => {
+    const submitted = values[`line-${line.line_id}`];
+    const quantity = submitted === undefined ? (line.requested_quantity ?? '') : submitted;
+    const status = stockStatus(line);
+    const badge = status ? ` ${stockBadge(status)}` : '';
+    return `<tr>
+      <td class="part-number">${escapeHtml(line.part_number)}</td>
+      <td><a class="product-description" href="/products/${line.id}">${escapeHtml(line.description)}</a>
+        ${line.archived ? '<span class="status-tag">Archivado</span>' : ''}</td>
+      <td class="quantity-cell">${line.quantity}${badge}</td>
+      ${canManage ? `<td><input class="line-quantity" type="number" min="1" step="1" inputmode="numeric"
+          name="line-${line.line_id}" value="${escapeHtml(quantity)}" aria-label="Cantidad solicitada de ${escapeHtml(line.part_number)}"></td>
+        <td class="row-action"><button class="text-link" type="submit" formaction="/purchase-orders/${order.id}/lines/${line.line_id}/remove">Retirar</button></td>`
+        : `<td class="quantity-cell">${quantity === '' ? '<span class="muted">—</span>' : quantity}</td>`}
+    </tr>`;
+  }).join('');
+
+  const table = lines.length ? `<div class="table-scroll"><table><thead><tr>
+      <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Existencias</th>
+      <th scope="col" class="align-right">Cantidad solicitada</th>${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
+    </tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<div class="empty-state"><p>Todavía no hay artículos en esta lista.</p></div>`;
+
+  const addSection = canManage ? `<section class="form-section">
+      <h2>Añadir artículo</h2>
+      <p class="form-hint">Se ofrecen solo artículos activos; los agotados y con stock bajo aparecen primero.</p>
+      ${available.length ? `<div class="form-grid"><div class="field field-wide">
+          <label for="productId">Artículo activo</label>
+          <select id="productId" name="productId">
+            <option value="">Selecciona un artículo</option>
+            ${options}
+          </select>
+        </div></div>
+        <div class="form-actions"><button class="button button-secondary" type="submit" formaction="/purchase-orders/${order.id}/lines">Añadir artículo</button></div>`
+        : '<p class="form-hint">Todos los artículos activos ya están en esta lista.</p>'}
+    </section>` : '';
+
+  const detail = canManage ? `<form class="product-form" method="post" action="/purchase-orders/${order.id}">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      <section class="form-section"><h2>Artículos de la lista</h2>
+        <p class="form-hint">Deja una cantidad vacía para guardar el borrador incompleto. Las cantidades escritas deben ser enteros mayores que cero.</p>
+        ${table}
+      </section>
+      ${addSection}
+      <div class="form-actions"><a class="button button-quiet" href="/purchase-orders">Volver</a>
+        <button class="button button-primary" type="submit">Guardar borrador</button></div>
+    </form>`
+    : `<section class="inventory-panel" aria-label="Artículos de la lista">
+      ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      ${table}
+    </section>`;
+
+  const content = `
+    <div class="breadcrumb"><a href="/purchase-orders">Órdenes de compra</a><span aria-hidden="true">/</span><span>Compra #${order.id}</span></div>
+    <div class="page-heading"><div><p class="eyebrow">${order.status === 'archived' ? 'Archivada' : 'Borrador'}</p>
+      <h1>Compra #${order.id}</h1>
+      <p class="page-subtitle">Creada el ${escapeHtml(formatTimestamp(order.created_at))} · ${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</p></div></div>
+    ${detail}`;
+  return page(`Compra #${order.id}`, content, { ...session, active: 'purchases' });
 }
 
 export function productDetailPage({ product, ...session }) {
@@ -559,7 +669,8 @@ function formatUtc(value) {
 function backupCounts(backup) {
   const articles = backup.products ?? 0;
   const movements = backup.movements ?? 0;
-  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías`;
+  const purchases = backup.purchaseOrders ?? 0;
+  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías · ${purchases} ${purchases === 1 ? 'lista de compra' : 'listas de compra'}`;
 }
 
 export function backupsPage({ backups, lastRestore = null, error = '', message = '', ...session }) {
@@ -585,7 +696,7 @@ export function backupsPage({ backups, lastRestore = null, error = '', message =
   return page('Copias de seguridad', `
     <div class="page-heading">
       <div><p class="eyebrow">Administración</p><h1>Copias de seguridad</h1>
-        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve cuentas, artículos, categorías, existencias e historial.</p></div>
+        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve cuentas, artículos, categorías, existencias, historial y listas de compra.</p></div>
       <form method="post" action="/backups">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
         <button class="button button-primary" type="submit">Crear copia ahora</button>

@@ -64,6 +64,28 @@ export function openDatabase(databasePath) {
   if (!database.prepare('PRAGMA table_info(stock_movements)').all().some((column) => column.name === 'source')) {
     database.exec("ALTER TABLE stock_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import'))");
   }
+  // Purchase drafts live in the same SQLite file as the rest of the state, so the
+  // accepted backup/restore ADR already covers them (see docs/adr/0001).
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+      id INTEGER PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'archived')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS purchase_order_lines (
+      id INTEGER PRIMARY KEY,
+      purchase_order_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      quantity INTEGER CHECK (quantity IS NULL OR (quantity > 0 AND quantity <= 9007199254740991)),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (purchase_order_id, product_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS purchase_order_lines_order ON purchase_order_lines(purchase_order_id, id);
+  `);
   return database;
 }
 
@@ -169,4 +191,59 @@ export function setProductArchived(database, id, archived) {
   return database.prepare(`
     UPDATE products SET archived = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
   `).run(archived ? 1 : 0, id);
+}
+
+export function insertPurchaseOrder(database) {
+  return database.prepare('INSERT INTO purchase_orders DEFAULT VALUES').run();
+}
+
+export function findPurchaseOrder(database, id) {
+  return database.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id);
+}
+
+// The list view shows how many articles each draft already includes and how many have a quantity.
+export function listPurchaseOrders(database) {
+  return database.prepare(`
+    SELECT purchase_orders.*,
+      (SELECT COUNT(*) FROM purchase_order_lines lines WHERE lines.purchase_order_id = purchase_orders.id) AS line_count,
+      (SELECT COUNT(*) FROM purchase_order_lines lines WHERE lines.purchase_order_id = purchase_orders.id AND lines.quantity IS NOT NULL) AS ready_count
+    FROM purchase_orders
+    ORDER BY purchase_orders.id DESC
+  `).all();
+}
+
+// Lines join the live product record, so archived articles stay visible and identified in existing lists.
+export function listPurchaseOrderLines(database, purchaseOrderId) {
+  return database.prepare(`
+    SELECT lines.id AS line_id, lines.quantity AS requested_quantity,
+      products.*, categories.name AS category_name
+    FROM purchase_order_lines lines
+    JOIN products ON products.id = lines.product_id
+    LEFT JOIN categories ON categories.id = products.category_id
+    WHERE lines.purchase_order_id = ?
+    ORDER BY products.part_number COLLATE NOCASE, products.id
+  `).all(purchaseOrderId);
+}
+
+export function findPurchaseOrderLine(database, purchaseOrderId, productId) {
+  return database.prepare('SELECT * FROM purchase_order_lines WHERE purchase_order_id = ? AND product_id = ?').get(purchaseOrderId, productId);
+}
+
+export function insertPurchaseOrderLine(database, purchaseOrderId, productId) {
+  return database.prepare('INSERT INTO purchase_order_lines (purchase_order_id, product_id) VALUES (?, ?)').run(purchaseOrderId, productId);
+}
+
+export function setPurchaseOrderLineQuantity(database, purchaseOrderId, lineId, quantity) {
+  return database.prepare(`
+    UPDATE purchase_order_lines SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND purchase_order_id = ?
+  `).run(quantity, lineId, purchaseOrderId);
+}
+
+export function removePurchaseOrderLine(database, purchaseOrderId, lineId) {
+  return database.prepare('DELETE FROM purchase_order_lines WHERE id = ? AND purchase_order_id = ?').run(lineId, purchaseOrderId);
+}
+
+export function touchPurchaseOrder(database, id) {
+  return database.prepare('UPDATE purchase_orders SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
 }

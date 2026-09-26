@@ -31,7 +31,7 @@ La protección de operaciones de escritura exige Gestión o Administración.
 
 ## Buscar, filtrar y archivar
 
-Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**; esta última es una sección pendiente de implementación. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
+Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**, donde se preparan las listas de repuestos a pedir. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
 
 **Productos** muestra el catálogo activo y permite consultar los archivados, agregar y editar productos. El nombre abre la ficha con existencias e historial. Gestión y Administración pueden elegir una categoría opcional o crearla al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial. **Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Los enlaces antiguos a archivados redirigen a Productos.
 
@@ -105,6 +105,21 @@ La exportación completa respeta los filtros y el estado de la vista y recorre *
 
 Puedes cargar de nuevo el archivo en **Importar Excel** para revisar los cambios antes de confirmarlos. Para recuperar las cantidades exportadas desde Inventario, activa **Establecer en**; **Ajustar por** sumaría las cantidades al stock actual. Se aplican los límites de importación de 2 MB y 1000 filas por archivo; para inventarios mayores, prepara lotes dentro de esos límites conservando los encabezados. Una exportación sin artículos genera solo los encabezados.
 
+## Órdenes de compra
+
+**Órdenes de compra** reúne las listas de repuestos a pedir. Cada lista tiene un número interno y una fecha, se guarda como **borrador** y se recupera al reiniciar la aplicación.
+
+Gestión y Administración pueden crear una **Nueva lista de compra**. En la ficha de la lista:
+
+- El selector **Añadir artículo** ofrece solo artículos activos y muestra primero los **Agotados** y con **Stock bajo**; cualquier artículo activo puede añadirse.
+- Cada artículo aparece **una sola vez** por lista. Volver a añadirlo conserva su línea sin sumar cantidades.
+- La **cantidad solicitada** empieza vacía y se escribe manualmente; no se calcula desde el mínimo de stock. Puedes guardar un borrador incompleto. Si escribes una cantidad, debe ser un número entero mayor que cero.
+- **Retirar** quita una línea. Los artículos archivados después siguen visibles e identificados en las listas existentes y pueden retirarse, pero no se ofrecen para nuevas incorporaciones.
+
+Guardar o editar una lista **no cambia las existencias ni genera movimientos**. Consulta puede ver las listas; Gestión y Administración las crean y editan, con autorización y validación en el servidor. La exportación a Excel y el archivado/reapertura manual llegan en el siguiente corte.
+
+Las listas y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
+
 ## Copias de seguridad
 
 La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:
@@ -113,9 +128,9 @@ La aplicación crea copias de seguridad automáticas de la base de datos sin int
 - Se guardan como archivos SQLite en `data/backups/` (o en `BACKUP_DIRECTORY`).
 - Se conservan las 10 más recientes; las anteriores se eliminan automáticamente (`BACKUP_RETENTION`).
 
-Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos, movimientos y categorías e integridad verificada.
+Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos, movimientos, categorías y listas de compra e integridad verificada.
 
-**Restaurar** una copia reemplaza cuentas, artículos, categorías, existencias e historial por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que sus recuentos de cuentas, artículos, movimientos y categorías coinciden con la copia elegida. Las copias anteriores a las categorías siguen siendo restaurables y se migran con los artículos Sin categoría. Una copia dañada aparece como **No verificable** y no puede restaurarse.
+**Restaurar** una copia reemplaza cuentas, artículos, categorías, existencias, historial y listas de compra por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que sus recuentos de cuentas, artículos, movimientos, categorías y listas de compra coinciden con la copia elegida. Las copias anteriores a las categorías siguen siendo restaurables y se migran con los artículos Sin categoría. Una copia dañada aparece como **No verificable** y no puede restaurarse.
 
 Parámetros opcionales: `BACKUP_DIRECTORY`, `BACKUP_INTERVAL_MS` y `BACKUP_RETENTION`.
 
