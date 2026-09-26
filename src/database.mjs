@@ -247,3 +247,7 @@ export function removePurchaseOrderLine(database, purchaseOrderId, lineId) {
 export function touchPurchaseOrder(database, id) {
   return database.prepare('UPDATE purchase_orders SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
 }
+
+export function setPurchaseOrderStatus(database, id, status) {
+  return database.prepare('UPDATE purchase_orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, id);
+}

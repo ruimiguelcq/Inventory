@@ -69,3 +69,24 @@ export function exportInventory(products) {
 export function exportView(products, view) {
   return view === 'products' ? exportProducts(products) : exportInventory(products);
 }
+
+// A purchase export carries only P/N, name and requested quantity, with no prices, taxes,
+// supplier, number or date inside the document.
+const PURCHASE_COLUMNS = [
+  { header: 'P/N', key: 'part_number', width: 24, style: { numFmt: '@' } },
+  { header: 'Nombre', key: 'description', width: 48 },
+  { header: 'Cantidad solicitada', key: 'requested_quantity', width: 20 },
+];
+
+// Exporting needs at least one line and every requested quantity filled with a positive integer.
+export function validatePurchaseExport(lines) {
+  if (!lines.length) throw new ExportError('La lista no tiene artículos que exportar.');
+  if (lines.some((line) => !Number.isSafeInteger(line.requested_quantity) || line.requested_quantity <= 0)) {
+    throw new ExportError('Todas las cantidades solicitadas deben ser números enteros mayores que cero para exportar.');
+  }
+  return lines;
+}
+
+export function exportPurchaseOrder(lines) {
+  return writeSheet(PURCHASE_COLUMNS, validatePurchaseExport(lines), 'Compra');
+}

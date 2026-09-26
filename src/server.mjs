@@ -24,9 +24,9 @@ import {
 import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { catalogState, filterProducts, paginateProducts, validateProduct } from './products.mjs';
 import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
-import { addPurchaseLine, createPurchaseDraft, PurchaseError, removePurchaseLine, savePurchaseDraft, selectableProducts } from './purchases.mjs';
+import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
-import { exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
+import { exportPurchaseOrder, exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
@@ -487,31 +487,58 @@ export function createInventoryServer({
       const purchaseOrderMatch = url.pathname.match(/^\/purchase-orders\/(\d+)$/);
       const purchaseAddMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines$/);
       const purchaseRemoveMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines\/(\d+)\/remove$/);
-      if (purchaseOrderMatch || purchaseAddMatch || purchaseRemoveMatch) {
-        const order = findPurchaseOrder(database, Number((purchaseOrderMatch ?? purchaseAddMatch ?? purchaseRemoveMatch)[1]));
+      const purchaseStatusMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/(archive|reopen)$/);
+      const purchaseExportMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/export$/);
+      const purchaseMatch = purchaseOrderMatch ?? purchaseAddMatch ?? purchaseRemoveMatch ?? purchaseStatusMatch ?? purchaseExportMatch;
+      if (purchaseMatch) {
+        const order = findPurchaseOrder(database, Number(purchaseMatch[1]));
         if (!order) return sendHtml(response, notFoundPage(session), 404);
-        const renderPurchase = (values = {}, error = '') => sendHtml(response, purchaseOrderPage({
-          ...session, order, lines: listPurchaseOrderLines(database, order.id),
-          products: selectableProducts(listProducts(database)), values, error,
+        const purchaseLines = () => listPurchaseOrderLines(database, order.id);
+        const renderPurchase = ({ values = {}, error = '', message = '' } = {}) => sendHtml(response, purchaseOrderPage({
+          ...session, order, lines: purchaseLines(),
+          products: selectableProducts(listProducts(database)), values, error, message,
         }), error ? 400 : 200);
+
+        // Export is read-only for every authenticated role and never archives or touches stock.
+        if (request.method === 'GET' && purchaseExportMatch) {
+          try {
+            const buffer = await exportPurchaseOrder(purchaseLines());
+            response.writeHead(200, {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': `attachment; filename="compra-${order.id}.xlsx"`,
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            });
+            return response.end(buffer);
+          } catch (error) {
+            if (!(error instanceof ExportError)) throw error;
+            return renderPurchase({ error: error.message });
+          }
+        }
+
         if (request.method === 'GET' && purchaseOrderMatch) {
           const message = url.searchParams.get('added') === '1' ? 'Artículo añadido a la lista.'
             : url.searchParams.get('duplicate') === '1' ? 'El artículo ya formaba parte de la lista.'
             : url.searchParams.get('removed') === '1' ? 'Artículo retirado de la lista.'
-            : url.searchParams.get('saved') === '1' ? 'Borrador guardado.' : '';
-          return sendHtml(response, purchaseOrderPage({
-            ...session, order, lines: listPurchaseOrderLines(database, order.id),
-            products: selectableProducts(listProducts(database)), message,
-          }));
+            : url.searchParams.get('saved') === '1' ? 'Borrador guardado.'
+            : url.searchParams.get('archived') === '1' ? 'Lista archivada.'
+            : url.searchParams.get('reopened') === '1' ? 'Lista reabierta.' : '';
+          return renderPurchase({ message });
         }
-        if (request.method === 'POST') {
+
+        if (request.method === 'POST' && !purchaseExportMatch) {
           const form = await readForm(request);
           if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
           const user = findUser(database, session.userId);
           if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
           try {
             let flag;
-            if (purchaseAddMatch) {
+            if (purchaseStatusMatch) {
+              const archiving = purchaseStatusMatch[2] === 'archive';
+              if (archiving) archivePurchaseOrder(database, session.userId, order.id);
+              else reopenPurchaseOrder(database, session.userId, order.id);
+              flag = archiving ? 'archived' : 'reopened';
+            } else if (purchaseAddMatch) {
               flag = addPurchaseLine(database, session.userId, order.id, form.get('productId')) ? 'added' : 'duplicate';
             } else if (purchaseRemoveMatch) {
               removePurchaseLine(database, session.userId, order.id, purchaseRemoveMatch[2]);
@@ -525,7 +552,7 @@ export function createInventoryServer({
             if (!(error instanceof PurchaseError)) throw error;
             if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
             if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
-            return renderPurchase(Object.fromEntries(form), error.message);
+            return renderPurchase({ values: Object.fromEntries(form), error: error.message });
           }
         }
       }
