@@ -24,12 +24,14 @@ export function validateProduct(form) {
   const brand = (form.get('brand') ?? '').trim();
   const location = (form.get('location') ?? '').trim();
   const minimumInput = (form.get('minimumStock') ?? '').trim();
-  const longDescription = (form.get('longDescription') ?? '').trim();
-  const priceInput = form.get('price') ?? '';
+  const longDescriptionInput = form.get('longDescription');
+  const priceInput = form.get('price');
+  const longDescription = (longDescriptionInput ?? '').trim();
   const initialInput = (form.get('initialQuantity') ?? '').trim();
   const product = { partNumber, description, presentation, brand: brand || null,
     location: location || null, minimumStock: minimumInput === '' ? null : Number(minimumInput),
-    longDescription: longDescription || null, priceCents: null, initialQuantity: initialInput === '' ? 0 : Number(initialInput) };
+    longDescription: longDescription || null, longDescriptionProvided: longDescriptionInput !== null,
+    priceCents: null, priceProvided: priceInput !== null, initialQuantity: initialInput === '' ? 0 : Number(initialInput) };
   if (!partNumber || partNumber.length > 100) return { error: 'Escribe un P/N de hasta 100 caracteres.', product };
   if (!description || description.length > 240) return { error: 'Escribe un nombre de producto de hasta 240 caracteres.', product };
   if (!PRESENTATIONS.includes(presentation)) return { error: 'Elige una presentación válida: Set, Kit o Unidad.', product };

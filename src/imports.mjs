@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { findUser, insertProduct, updateProduct } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, updateProduct } from './database.mjs';
 import { validateProduct } from './products.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock, reviewStock, StockError } from './stock.mjs';
@@ -145,11 +145,7 @@ export async function previewImport(database, form, view) {
 // Categories are reused case-insensitively so equivalent names never duplicate.
 function assignCategory(database, productId, category) {
   if (category === undefined) return;
-  let categoryId = null;
-  if (category) {
-    database.prepare('INSERT INTO categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING').run(category);
-    categoryId = database.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(category).id;
-  }
+  const categoryId = category ? findOrCreateNamed(database, 'categories', category) : null;
   database.prepare('UPDATE products SET category_id = ? WHERE id = ?').run(categoryId, productId);
 }
 

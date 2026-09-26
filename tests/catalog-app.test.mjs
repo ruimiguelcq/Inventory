@@ -489,6 +489,24 @@ test('extended product fields are saved, shown and validated through HTTP', asyn
   }
 });
 
+test('clearing a field writes null while omitting it preserves the stored value', async (t) => {
+  const a = await app(t);
+  const base = { csrfToken: a.csrfToken, partNumber: 'P-1', description: 'Producto', presentation: 'KIT', price: '9.99', longDescription: 'Nota original' };
+  assert.equal((await a.post('/products', base)).status, 303);
+
+  // A request with neither field (nor representation of them) must not wipe what exists.
+  assert.equal((await a.post('/products/1', { csrfToken: a.csrfToken, partNumber: 'P-1', description: 'Renombrado', presentation: 'KIT' })).status, 303);
+  const kept = await (await a.get('/products/1')).text();
+  assert.match(kept, /<dt>Precio<\/dt><dd>\$9\.99<\/dd>/);
+  assert.match(kept, /Nota original/);
+
+  // Explicit empty values clear them.
+  assert.equal((await a.post('/products/1', { ...base, description: 'Renombrado', price: '', longDescription: '' })).status, 303);
+  const cleared = await (await a.get('/products/1')).text();
+  assert.match(cleared, /<dt>Precio<\/dt><dd>—<\/dd>/);
+  assert.match(cleared, /<dt>Descripción<\/dt><dd class="long-description">—<\/dd>/);
+});
+
 test('prices are stored as integer cents and shown with two decimals', async (t) => {
   const a = await app(t);
   for (const [price, shown] of [['0.1', '0.10'], ['19.99', '19.99'], ['7', '7.00'], ['0', '0.00']]) {

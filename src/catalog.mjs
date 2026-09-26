@@ -1,4 +1,4 @@
-import { findUser, insertProduct, setProductClassification, updateProduct, setProductArchived } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, setProductClassification, updateProduct, setProductArchived } from './database.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock } from './stock.mjs';
 
@@ -20,40 +20,37 @@ function requireManager(database, userId) {
 const NAMED_LISTS = {
   category: {
     table: 'categories',
-    tooLong: 'La categoría no puede superar los 100 caracteres.',
-    conflict: 'Elige una categoría existente o escribe una nueva.',
-    invalid: 'Elige una categoría válida.',
+    tooLongMessage: 'La categoría no puede superar los 100 caracteres.',
+    conflictMessage: 'Elige una categoría existente o escribe una nueva.',
+    invalidMessage: 'Elige una categoría válida.',
   },
   productType: {
     table: 'product_types',
-    tooLong: 'El tipo de producto no puede superar los 100 caracteres.',
-    conflict: 'Elige un tipo de producto existente o escribe uno nuevo.',
-    invalid: 'Elige un tipo de producto válido.',
+    tooLongMessage: 'El tipo de producto no puede superar los 100 caracteres.',
+    conflictMessage: 'Elige un tipo de producto existente o escribe uno nuevo.',
+    invalidMessage: 'Elige un tipo de producto válido.',
   },
   supplier: {
     table: 'suppliers',
-    tooLong: 'El proveedor no puede superar los 100 caracteres.',
-    conflict: 'Elige un proveedor existente o escribe uno nuevo.',
-    invalid: 'Elige un proveedor válido.',
+    tooLongMessage: 'El proveedor no puede superar los 100 caracteres.',
+    conflictMessage: 'Elige un proveedor existente o escribe uno nuevo.',
+    invalidMessage: 'Elige un proveedor válido.',
   },
 };
 
-function resolveNamedList(database, { table, tooLong, conflict, invalid }, idInput, newInput, existingId) {
+function resolveNamedList(database, { table, tooLongMessage, conflictMessage, invalidMessage }, idInput, newInput, existingId) {
   const id = idInput ?? (existingId != null ? String(existingId) : '');
   const name = (newInput ?? '').trim();
-  if (name.length > 100) throw new CatalogError(tooLong);
-  if (name && id) throw new CatalogError(conflict);
+  if (name.length > 100) throw new CatalogError(tooLongMessage);
+  if (name && id) throw new CatalogError(conflictMessage);
   if (id) {
     if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))
       || !database.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(Number(id))) {
-      throw new CatalogError(invalid);
+      throw new CatalogError(invalidMessage);
     }
     return Number(id);
   }
-  if (name) {
-    database.prepare(`INSERT INTO ${table} (name) VALUES (?) ON CONFLICT(name) DO NOTHING`).run(name);
-    return database.prepare(`SELECT id FROM ${table} WHERE name = ? COLLATE NOCASE`).get(name).id;
-  }
+  if (name) return findOrCreateNamed(database, table, name);
   return null;
 }
 
@@ -67,9 +64,10 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
     const supplierId = resolveNamedList(database, NAMED_LISTS.supplier, form.get('supplierId'), form.get('newSupplier'), existingProduct?.supplier_id);
     const id = existingProduct?.id ?? Number(insertProduct(database, product).lastInsertRowid);
     if (existingProduct) updateProduct(database, id, product);
+    // A form that omits a field preserves the stored value; an empty field clears it.
     setProductClassification(database, id, {
-      longDescription: product.longDescription ?? null,
-      priceCents: product.priceCents ?? null,
+      longDescription: product.longDescriptionProvided ? product.longDescription : (existingProduct?.long_description ?? null),
+      priceCents: product.priceProvided ? product.priceCents : (existingProduct?.price_cents ?? null),
       categoryId, productTypeId, supplierId,
     });
     if (!existingProduct && product.initialQuantity > 0) {

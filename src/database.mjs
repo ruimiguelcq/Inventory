@@ -2,6 +2,22 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+// The movement source is shared by the fresh table, the ALTER migration and the table rebuild.
+const MOVEMENT_SOURCE_COLUMN = "source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))";
+
+const STOCK_MOVEMENT_COLUMNS = `
+      id INTEGER PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
+      quantity INTEGER NOT NULL,
+      previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
+      new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
+      presentation TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      ${MOVEMENT_SOURCE_COLUMN}`;
+
 export function openDatabase(databasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -72,23 +88,12 @@ export function openDatabase(databasePath) {
     database.exec('ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)');
   }
   database.exec(`
-    CREATE TABLE IF NOT EXISTS stock_movements (
-      id INTEGER PRIMARY KEY,
-      product_id INTEGER NOT NULL REFERENCES products(id),
-      user_id INTEGER NOT NULL REFERENCES users(id),
-      operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
-      quantity INTEGER NOT NULL,
-      previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
-      new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
-      presentation TEXT NOT NULL,
-      reason TEXT,
-      created_at TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))
+    CREATE TABLE IF NOT EXISTS stock_movements (${STOCK_MOVEMENT_COLUMNS}
     );
     CREATE INDEX IF NOT EXISTS stock_movements_product ON stock_movements(product_id, id);
   `);
   if (!database.prepare('PRAGMA table_info(stock_movements)').all().some((column) => column.name === 'source')) {
-    database.exec("ALTER TABLE stock_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))");
+    database.exec(`ALTER TABLE stock_movements ADD COLUMN ${MOVEMENT_SOURCE_COLUMN}`);
   } else if (!(database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'stock_movements'").get()?.sql ?? '').includes("'creation'")) {
     rebuildStockMovementsForCreation(database);
   }
@@ -123,18 +128,7 @@ function rebuildStockMovementsForCreation(database) {
   database.exec('BEGIN IMMEDIATE');
   try {
     database.exec(`
-      CREATE TABLE stock_movements_new (
-        id INTEGER PRIMARY KEY,
-        product_id INTEGER NOT NULL REFERENCES products(id),
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
-        quantity INTEGER NOT NULL,
-        previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
-        new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
-        presentation TEXT NOT NULL,
-        reason TEXT,
-        created_at TEXT NOT NULL,
-        source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))
+      CREATE TABLE stock_movements_new (${STOCK_MOVEMENT_COLUMNS}
       );
       INSERT INTO stock_movements_new (id, product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source)
         SELECT id, product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source FROM stock_movements;
@@ -218,6 +212,12 @@ export function listProducts(database) {
 
 export function listCategories(database) {
   return database.prepare('SELECT id, name FROM categories ORDER BY name COLLATE NOCASE, id').all();
+}
+
+// Categories, product types and suppliers grow on save and reuse an equivalent name.
+export function findOrCreateNamed(database, table, name) {
+  database.prepare(`INSERT INTO ${table} (name) VALUES (?) ON CONFLICT(name) DO NOTHING`).run(name);
+  return database.prepare(`SELECT id FROM ${table} WHERE name = ? COLLATE NOCASE`).get(name).id;
 }
 
 export function listProductTypes(database) {
