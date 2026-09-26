@@ -41,14 +41,23 @@ function backupFiles(directory) {
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.file.localeCompare(left.file));
 }
 
+function tableCount(database, name) {
+  const exists = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+  return exists ? database.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get().count : 0;
+}
+
 function inspectCounts(database) {
   const counts = database.prepare(`SELECT
     (SELECT COUNT(*) FROM products) AS products,
     (SELECT COUNT(*) FROM stock_movements) AS movements,
     (SELECT COUNT(*) FROM users) AS users`).get();
-  // Snapshots from before categories remain valid restore points; migration adds an empty table.
-  const hasCategories = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'categories'").get();
-  return { ...counts, categories: hasCategories ? database.prepare('SELECT COUNT(*) AS count FROM categories').get().count : 0 };
+  // Snapshots from before categories and purchases remain valid restore points; migration adds empty tables.
+  return {
+    ...counts,
+    categories: tableCount(database, 'categories'),
+    purchaseOrders: tableCount(database, 'purchase_orders'),
+    purchaseOrderLines: tableCount(database, 'purchase_order_lines'),
+  };
 }
 
 // Opens a candidate backup read-only and reports whether it is a sound snapshot.

@@ -8,19 +8,23 @@ import {
   createAdministrator,
   findUser,
   findProduct,
+  findPurchaseOrder,
   findUserByUsername,
   hasAdministrator,
   insertUser,
   listProducts,
   listCategories,
+  listPurchaseOrderLines,
+  listPurchaseOrders,
   listUsers,
   openDatabase,
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { catalogState, filterProducts, paginateProducts, validateProduct } from './products.mjs';
 import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
+import { addPurchaseLine, createPurchaseDraft, PurchaseError, removePurchaseLine, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
 import { exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
@@ -442,7 +446,8 @@ export function createInventoryServer({
               database = openDatabase(databasePath);
               const summary = summarizeDatabase(database);
               if (summary.integrity !== 'ok' || summary.products !== backup.products
-                || summary.movements !== backup.movements || summary.users !== backup.users || summary.categories !== backup.categories) {
+                || summary.movements !== backup.movements || summary.users !== backup.users || summary.categories !== backup.categories
+                || summary.purchaseOrders !== backup.purchaseOrders || summary.purchaseOrderLines !== backup.purchaseOrderLines) {
                 throw new BackupError('La restauración no coincide con la copia verificada.', 500);
               }
               lastRestore = { backup: backup.file, safety: safetyBackup.file, restoredAt: new Date().toISOString(), ...summary };
@@ -464,8 +469,65 @@ export function createInventoryServer({
         }
       }
 
-      if (request.method === 'GET' && url.pathname === '/purchase-orders') {
-        return sendHtml(response, purchaseOrdersPage(session));
+      if (url.pathname === '/purchase-orders') {
+        if (request.method === 'GET') {
+          return sendHtml(response, purchaseOrdersPage({ ...session, orders: listPurchaseOrders(database) }));
+        }
+        if (request.method === 'POST') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          // A role may change while the request body is arriving. Check again at the write boundary.
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const id = createPurchaseDraft(database, session.userId);
+          return redirect(response, `/purchase-orders/${id}`);
+        }
+      }
+
+      const purchaseOrderMatch = url.pathname.match(/^\/purchase-orders\/(\d+)$/);
+      const purchaseAddMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines$/);
+      const purchaseRemoveMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines\/(\d+)\/remove$/);
+      if (purchaseOrderMatch || purchaseAddMatch || purchaseRemoveMatch) {
+        const order = findPurchaseOrder(database, Number((purchaseOrderMatch ?? purchaseAddMatch ?? purchaseRemoveMatch)[1]));
+        if (!order) return sendHtml(response, notFoundPage(session), 404);
+        const renderPurchase = (values = {}, error = '') => sendHtml(response, purchaseOrderPage({
+          ...session, order, lines: listPurchaseOrderLines(database, order.id),
+          products: selectableProducts(listProducts(database)), values, error,
+        }), error ? 400 : 200);
+        if (request.method === 'GET' && purchaseOrderMatch) {
+          const message = url.searchParams.get('added') === '1' ? 'Artículo añadido a la lista.'
+            : url.searchParams.get('duplicate') === '1' ? 'El artículo ya formaba parte de la lista.'
+            : url.searchParams.get('removed') === '1' ? 'Artículo retirado de la lista.'
+            : url.searchParams.get('saved') === '1' ? 'Borrador guardado.' : '';
+          return sendHtml(response, purchaseOrderPage({
+            ...session, order, lines: listPurchaseOrderLines(database, order.id),
+            products: selectableProducts(listProducts(database)), message,
+          }));
+        }
+        if (request.method === 'POST') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            let flag;
+            if (purchaseAddMatch) {
+              flag = addPurchaseLine(database, session.userId, order.id, form.get('productId')) ? 'added' : 'duplicate';
+            } else if (purchaseRemoveMatch) {
+              removePurchaseLine(database, session.userId, order.id, purchaseRemoveMatch[2]);
+              flag = 'removed';
+            } else {
+              savePurchaseDraft(database, session.userId, order.id, form);
+              flag = 'saved';
+            }
+            return redirect(response, `/purchase-orders/${order.id}?${flag}=1`);
+          } catch (error) {
+            if (!(error instanceof PurchaseError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return renderPurchase(Object.fromEntries(form), error.message);
+          }
+        }
       }
 
       if (request.method === 'GET' && ['/inventory', '/products'].includes(url.pathname)) {
