@@ -128,7 +128,7 @@ test('descriptions and stock can be imported independently and cancellation inva
   assert.equal((await confirm(await a.upload([
     ['P/N', 'Descripción', 'Presentación'], ['CAT', 'Nueva descripción', 'SET'],
   ], { descriptions: 'on' }))).status, 303);
-  assert.match(await (await a.get('/inventory')).text(), /Original/);
+  assert.match(await (await a.get('/products')).text(), /Original/);
   const preview = await a.upload([['P/N', 'Cantidad'], ['CAT', -3]], { stock: 'on', operation: 'adjust' });
   const fields = { csrfToken: a.csrfToken, confirmationToken: a.token(await preview.text(), 'confirmationToken') };
   assert.equal((await a.post('/imports/cancel', fields)).status, 303);

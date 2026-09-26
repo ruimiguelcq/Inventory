@@ -16,12 +16,11 @@ export function escapeHtml(value = '') {
 function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
   const navigation = username ? `
     <header class="topbar">
-      <a class="brand" href="/inventory" aria-label="Taller Marino, inventario">
+      <a class="brand" href="/products" aria-label="Taller Marino, productos">
         <span class="brand-mark" aria-hidden="true">T</span>
         <span>Taller Marino</span>
       </a>
-      <nav aria-label="Navegación principal">
-        <a class="nav-link ${active === 'inventory' ? 'is-active' : ''}" href="/inventory">Inventario</a>
+      <nav aria-label="Administración">
         ${role === 'admin' ? `<a class="nav-link ${active === 'users' ? 'is-active' : ''}" href="/users">Cuentas y permisos</a>` : ''}
         ${role === 'admin' ? `<a class="nav-link ${active === 'backups' ? 'is-active' : ''}" href="/backups">Copias de seguridad</a>` : ''}
       </nav>
@@ -32,7 +31,10 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
           <button class="button button-quiet" type="submit">Cerrar sesión</button>
         </form>
       </div>
-    </header>` : '';
+    </header>
+    <aside class="sidebar"><nav aria-label="Navegación principal">
+      ${[['products', '/products', 'Productos'], ['inventory', '/inventory', 'Inventario'], ['purchases', '/purchase-orders', 'Órdenes de compra']].map(([key, href, label]) => `<a class="sidebar-link ${key !== 'products' ? 'sidebar-child' : ''} ${active === key ? 'is-active' : ''}" href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}
+    </nav></aside>` : '';
 
   return `<!doctype html>
 <html lang="es">
@@ -42,8 +44,9 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
     <meta name="color-scheme" content="light">
     <title>${escapeHtml(title)} · Taller Marino</title>
     <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/catalog.js" defer></script>
   </head>
-  <body>
+  <body class="${username ? 'authenticated' : 'public-page'}">
     ${navigation}
     <main class="page-shell">
       ${message ? `<p class="notice" role="status">${escapeHtml(message)}</p>` : ''}
@@ -95,19 +98,25 @@ export function loginPage({ error = '' } = {}) {
     </section>`);
 }
 
-export function inventoryPage({ products, filters = {}, ...session }) {
+export function inventoryPage(options) {
+  return catalogPage({ ...options, inventory: true });
+}
+
+export function productsPage(options) {
+  return catalogPage(options);
+}
+
+function catalogPage({ products, filters = {}, inventory = false, ...session }) {
   const canManage = canManageInventory(session.role);
-  const archivedView = Boolean(filters.archived);
+  const archivedView = !inventory && Boolean(filters.archived);
+  const route = inventory ? '/inventory' : '/products';
+  const title = inventory ? 'Inventario' : 'Productos';
   const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.outOfStock || filters.lowStock);
   const csrfToken = session.csrfToken;
 
   const badgeOf = (status) => status === 'agotado'
     ? '<span class="badge badge-out">Agotado</span>'
     : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
-
-  const partNumberCell = (product) => (canManage && !archivedView)
-    ? `<a href="/products/${product.id}/edit">${escapeHtml(product.part_number)}</a>`
-    : escapeHtml(product.part_number);
 
   const stockActions = (product) => {
     const history = `<a href="/products/${product.id}/history">Historial</a>`;
@@ -117,7 +126,8 @@ export function inventoryPage({ products, filters = {}, ...session }) {
         <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
         <button type="submit" class="text-link">Desarchivar</button></form>`;
     }
-    return `${history} · <a href="/products/${product.id}/stock">Ajustar existencias</a> · <form method="post" action="/products/${product.id}/archive" class="inline-form">
+    if (inventory) return `<a href="/products/${product.id}/stock">Ajustar existencias</a> · ${history}`;
+    return `${history} · <form method="post" action="/products/${product.id}/archive" class="inline-form">
       <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
       <button type="submit" class="text-link">Archivar</button></form>`;
   };
@@ -125,50 +135,36 @@ export function inventoryPage({ products, filters = {}, ...session }) {
   const rows = products.map((product) => {
     const status = stockStatus(product);
     return `<tr>
-      ${archivedView ? '' : `<td><input type="checkbox" name="id" value="${product.id}" form="export-selection" aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>`}
-      <td class="part-number">${partNumberCell(product)}</td>
-      <td><span class="product-description">${escapeHtml(product.description)}</span></td>
-      <td><span class="presentation-tag">${escapeHtml(product.presentation)}</span></td>
-      <td>${product.brand ? escapeHtml(product.brand) : '<span class="muted">—</span>'}</td>
-      <td>${product.location ? escapeHtml(product.location) : '<span class="muted">—</span>'}</td>
-      <td class="quantity-cell">${product.minimum_stock ?? '<span class="muted">—</span>'}</td>
+      <td><input type="checkbox" name="id" value="${product.id}" ${archivedView ? '' : 'form="export-selection"'} data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
+      <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
+      <td class="part-number">${escapeHtml(product.part_number)}</td>
+      ${inventory ? '' : `<td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>`}
       <td class="quantity-cell">${product.quantity}${status ? ` ${badgeOf(status)}` : ''}</td>
+      ${inventory ? `<td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
+        <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>` : `<td class="muted">Sin categoría</td>
+        <td>${escapeHtml(product.presentation)}</td><td>${escapeHtml(product.brand || '—')}</td>`}
       <td>${stockActions(product)}</td>
-      ${canManage && !archivedView ? `<td class="row-action"><a class="text-link" href="/products/${product.id}/edit">Editar</a></td>` : ''}
     </tr>`;
   }).join('');
 
-  const header = archivedView ? `
+  const header = `
     <thead><tr>
+      <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
+      <th scope="col">Nombre</th>
       <th scope="col">P/N</th>
-      <th scope="col">Repuesto</th>
-      <th scope="col">Presentación</th>
-      <th scope="col">Marca</th>
-      <th scope="col">Ubicación</th>
-      <th scope="col" class="align-right">Mínimo</th>
-      <th scope="col" class="align-right">Disponible</th>
-      <th scope="col">Existencias</th>
-    </tr></thead>` : `
-    <thead><tr>
-      <th scope="col">Seleccionar</th>
-      <th scope="col">P/N</th>
-      <th scope="col">Repuesto</th>
-      <th scope="col">Presentación</th>
-      <th scope="col">Marca</th>
-      <th scope="col">Ubicación</th>
-      <th scope="col" class="align-right">Mínimo</th>
-      <th scope="col" class="align-right">Disponible</th>
-      <th scope="col">Existencias</th>
-      ${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
+      ${inventory ? '' : '<th scope="col">Estado</th>'}
+      <th scope="col" class="align-right">Existencias</th>
+      ${inventory ? '<th scope="col" data-column="location" hidden>Ubicación</th><th scope="col" data-column="minimum" hidden>Mínimo de stock</th>' : '<th scope="col">Categoría</th><th scope="col">Presentación</th><th scope="col">Marca</th>'}
+      <th scope="col">Acciones</th>
     </tr></thead>`;
 
-  const headingTitle = hasActiveFilter ? 'Resultados' : archivedView ? 'Repuestos archivados' : 'Todos los repuestos';
+  const headingTitle = hasActiveFilter ? 'Resultados' : archivedView ? 'Repuestos archivados' : 'Todos';
 
   const emptyState = hasActiveFilter
     ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
       <h3>Sin resultados</h3>
       <p>Ningún repuesto coincide con la búsqueda o los filtros.</p>
-      <a class="button button-secondary" href="/inventory">Limpiar filtros</a></div>`
+      <a class="button button-secondary" href="${route}">Limpiar filtros</a></div>`
     : archivedView
       ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
         <h3>No hay repuestos archivados</h3>
@@ -181,7 +177,7 @@ export function inventoryPage({ products, filters = {}, ...session }) {
         </div>`;
 
   const filterBar = `
-    <form class="filter-bar" method="get" action="/inventory">
+    <form class="filter-bar" method="get" action="${route}">
       <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o descripción" aria-label="Buscar repuestos">
       <select name="presentation" aria-label="Filtrar por presentación">
         <option value="">Todas las presentaciones</option>
@@ -189,28 +185,26 @@ export function inventoryPage({ products, filters = {}, ...session }) {
       </select>
       <label class="filter-check"><input type="checkbox" name="outOfStock" ${filters.outOfStock ? 'checked' : ''}> Agotados</label>
       <label class="filter-check"><input type="checkbox" name="lowStock" ${filters.lowStock ? 'checked' : ''}> Stock bajo</label>
-      <label class="filter-check"><input type="checkbox" name="archived" ${filters.archived ? 'checked' : ''}> Archivados</label>
+      ${inventory ? '' : `<label class="filter-check"><input type="checkbox" name="archived" ${archivedView ? 'checked' : ''}> Archivados</label>`}
       <button class="button button-secondary" type="submit">Filtrar</button>
-      ${hasActiveFilter || archivedView ? '<a class="button button-quiet" href="/inventory">Limpiar</a>' : ''}
+      ${hasActiveFilter || archivedView ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
     </form>`;
 
   const content = `
     <div class="page-heading">
       <div>
-        <p class="eyebrow">Almacén · 1 ubicación</p>
-        <h1>Inventario de repuestos</h1>
-        <p class="page-subtitle">Consulta y mantén las piezas de tu almacén.</p>
+        <h1>${title}</h1>
       </div>
       <div class="form-actions">
-        <a class="button button-secondary" href="/exports?scope=all">Exportar todo a Excel</a>
-        ${canManage ? '<a class="button button-secondary" href="/imports">Importar Excel</a><a class="button button-primary" href="/products/new">Añadir repuesto</a>' : ''}
+        ${canManage ? `<a class="button button-secondary" href="/imports">${inventory ? 'Importar' : 'Importar productos'}</a>` : ''}
+        <a class="button button-secondary" href="/exports?scope=all">${inventory ? 'Exportar' : 'Exportar productos'}</a>
+        ${canManage && !inventory ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}
       </div>
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
       <div class="table-toolbar">
         <div>
           <h2>${headingTitle}</h2>
-          <p>${products.length} ${products.length === 1 ? 'artículo' : 'artículos'}</p>
         </div>
         ${archivedView ? '' : `<form id="export-selection" method="post" action="/exports">
           <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
@@ -219,13 +213,43 @@ export function inventoryPage({ products, filters = {}, ...session }) {
         </form>`}
       </div>
       ${filterBar}
+      ${inventory ? `<fieldset class="column-controls"><legend>Columnas opcionales</legend>
+        <label><input type="checkbox" data-column-toggle="location"> Ubicación</label>
+        <label><input type="checkbox" data-column-toggle="minimum"> Mínimo de stock</label>
+      </fieldset>` : ''}
       ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
       ${products.length ? `
         <div class="table-scroll">
           <table>${header}<tbody>${rows}</tbody></table>
         </div>` : emptyState}
     </section>`;
-  return page('Inventario', content, session);
+  return page(title, content, { ...session, active: inventory ? 'inventory' : 'products' });
+}
+
+export function purchaseOrdersPage(session) {
+  return page('Órdenes de compra', `<div class="page-heading"><h1>Órdenes de compra</h1></div>
+    <section class="inventory-panel empty-state"><h2>Órdenes de compra, próximamente</h2>
+      <p>Esta sección todavía no permite crear ni gestionar compras.</p>
+      <a class="button button-secondary" href="/inventory">Consultar inventario</a></section>`, { ...session, active: 'purchases' });
+}
+
+export function productDetailPage({ product, ...session }) {
+  return page(product.description, `<div class="breadcrumb"><a href="/products">Productos</a><span>/</span><span>Ficha del producto</span></div>
+    <div class="page-heading"><h1>${escapeHtml(product.description)}</h1>
+      ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/edit">Editar producto</a>` : ''}</div>
+    <section class="product-form form-section"><h2>${escapeHtml(product.part_number)}</h2>
+      <dl class="product-details">
+        <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
+        <dt>Existencias</dt><dd>${product.quantity}</dd>
+        <dt>Categoría</dt><dd>Sin categoría</dd>
+        <dt>Presentación</dt><dd>${escapeHtml(product.presentation)}</dd>
+        <dt>Marca</dt><dd>${escapeHtml(product.brand || '—')}</dd>
+        <dt>Ubicación</dt><dd>${escapeHtml(product.location || '—')}</dd>
+        <dt>Mínimo de stock</dt><dd>${product.minimum_stock ?? '—'}</dd>
+      </dl>
+      <a class="button button-secondary" href="/products/${product.id}/history">Historial</a>
+      ${canManageInventory(session.role) && !product.archived ? `<a class="button button-secondary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}
+    </section>`, { ...session, active: 'products' });
 }
 
 function roleOptions(selectedRole = 'viewer') {
@@ -283,10 +307,10 @@ export function productFormPage({ product = {}, error = '', isNew = true, ...ses
   const action = isNew ? '/products' : `/products/${product.id}`;
   const title = isNew ? 'Añadir repuesto' : 'Editar repuesto';
   const content = `
-    <div class="breadcrumb"><a href="/inventory">Inventario</a><span aria-hidden="true">/</span><span>${title}</span></div>
+    <div class="breadcrumb"><a href="/products">Productos</a><span aria-hidden="true">/</span><span>${title}</span></div>
     <div class="page-heading form-heading">
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
-      ${!isNew ? `<div><a href="/products/${product.id}/stock">Ajustar existencias</a> · <a href="/products/${product.id}/history">Historial</a></div>` : ''}
+      ${!isNew ? `<div>Existencias: <strong>${product.quantity}</strong> · ${!product.archived ? `<a href="/products/${product.id}/stock">Ajustar existencias</a> · ` : ''}<a href="/products/${product.id}/history">Historial</a></div>` : ''}
     </div>
     <form class="product-form" method="post" action="${action}">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
@@ -328,11 +352,11 @@ export function productFormPage({ product = {}, error = '', isNew = true, ...ses
         </div>
       </section>
       <div class="form-actions">
-        <a class="button button-quiet" href="/inventory">Cancelar</a>
+        <a class="button button-quiet" href="/products">Cancelar</a>
         <button class="button button-primary" type="submit">Guardar repuesto</button>
       </div>
     </form>`;
-  return page(title, content, { ...session, active: 'inventory' });
+  return page(title, content, { ...session, active: 'products' });
 }
 
 export function notFoundPage(session = {}) {

@@ -31,7 +31,11 @@ La protección de operaciones de escritura exige Gestión o Administración.
 
 ## Buscar, filtrar y archivar
 
-La tabla del inventario ofrece una barra de búsqueda y filtros:
+Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**; esta última es una sección pendiente de implementación. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
+
+**Productos** muestra el catálogo activo y permite consultar los archivados, agregar y editar productos. El nombre abre la ficha con existencias e historial. La categoría aparece por ahora como **Sin categoría**. **Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Los enlaces antiguos a archivados redirigen a Productos.
+
+Las tablas de Productos e Inventario ofrecen una barra de búsqueda y filtros:
 
 - **Buscar** por P/N o descripción, sin distinguir mayúsculas.
 - **Filtrar por presentación** (SET, KIT o unidad).
@@ -40,7 +44,7 @@ La tabla del inventario ofrece una barra de búsqueda y filtros:
 
 Cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
 
-Gestión y Administración pueden **Archivar** un repuesto para retirarlo de la vista activa sin borrar su historial. La opción **Archivados** de la barra de filtros muestra los artículos archivados, desde donde se pueden **Desarchivar**. La vista normal prioriza los artículos activos; no hay borrado definitivo desde la interfaz.
+Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial. La opción **Archivados** de la barra de filtros de Productos muestra los artículos archivados, desde donde se pueden **Desarchivar**. La vista normal prioriza los artículos activos; no hay borrado definitivo desde la interfaz.
 
 ## Existencias e historial
 
@@ -57,7 +61,7 @@ La primera ejecución tras esta actualización añade las tablas y columnas nece
 
 ## Importar desde Excel
 
-Desde **Inventario → Importar Excel**, Gestión y Administración pueden cargar un archivo `.xlsx` con una sola hoja, hasta 2 MB y 1000 filas de datos. La primera fila contiene los encabezados:
+Desde **Inventario → Importar** o **Productos → Importar productos**, Gestión y Administración pueden cargar un archivo `.xlsx` con una sola hoja, hasta 2 MB y 1000 filas de datos. Ambas vistas reutilizan el mismo flujo de Excel. La primera fila contiene los encabezados:
 
 | P/N | Descripción | Presentación | Marca | Ubicación | Mínimo de stock | Cantidad |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -78,7 +82,7 @@ La dependencia ExcelJS usa una sustitución de `uuid` por su versión 11 corregi
 
 Desde **Inventario**, cualquier miembro del equipo con sesión iniciada (Consulta, Gestión o Administración) puede descargar:
 
-- **Exportar todo a Excel:** todos los artículos del inventario.
+- **Exportar** (o **Exportar productos** desde Productos): todos los artículos activos, con el formato de Excel existente.
 - **Exportar selección a Excel:** solo los artículos marcados en las casillas de la tabla. Una selección vacía o inválida muestra un mensaje y no descarga el inventario completo.
 
 El archivo `inventario.xlsx` contiene una hoja con P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock y Cantidad. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.

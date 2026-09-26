@@ -66,7 +66,8 @@ test('the administrator can set up access and create a repuesto visible in the i
 
   const inventoryPage = await fetch(`${baseUrl}/inventory`, { headers: { cookie: administratorCookie } });
   const inventoryHtml = await inventoryPage.text();
-  assert.match(inventoryHtml, /Inventario de repuestos/);
+  assert.match(inventoryHtml, /<h1>Inventario<\/h1>/);
+  assert.equal(setupResponse.headers.get('location'), '/products');
 
   const csrfToken = inventoryHtml.match(/name="csrfToken" value="([^"]+)"/)[1];
   const createResponse = await fetch(`${baseUrl}/products`, {
@@ -90,10 +91,11 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /6L-12345/);
   assert.match(savedHtml, /Conchas de biela/);
   assert.match(savedHtml, /SET/);
-  assert.match(savedHtml, /Marina Parts/);
+  const catalogHtml = await (await fetch(`${baseUrl}/products`, { headers: { cookie: administratorCookie } })).text();
+  assert.match(catalogHtml, /Marina Parts/);
   assert.match(savedHtml, /Estante B · caja 4/);
-  assert.match(savedHtml, /<td class="quantity-cell">2<\/td>/);
-  assert.match(savedHtml, /<th[^>]*>Disponible<\/th>/);
+  assert.match(savedHtml, /<td[^>]*data-column="minimum"[^>]*>2<\/td>/);
+  assert.match(savedHtml, /<th[^>]*>Existencias<\/th>/);
 });
 
 test('a duplicate P/N is rejected without changing the saved repuesto', async () => {
@@ -267,7 +269,7 @@ test('gestión can maintain articles and role changes apply to an existing sessi
   const html = await inventory.text();
   assert.match(html, /Filtro de aceite/);
   assert.doesNotMatch(html, /href="\/users"/);
-  const id = html.match(/href="\/products\/(\d+)\/edit">GEST-1/)[1];
+  const id = html.match(/href="\/products\/(\d+)">Filtro de aceite/)[1];
   assert.equal((await postForm(`/products/${id}`, { ...product, description: 'Filtro actualizado' }, cookie)).status, 303);
   assert.equal((await postForm('/users', { csrfToken, username: 'otra', password: 'otra-segura-123', role: 'manager' }, cookie)).status, 403);
   const deniedAccounts = await fetch(`${baseUrl}/users`, { headers: { cookie } });

@@ -19,7 +19,7 @@ import {
   updateProduct,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, forbiddenPage, inventoryPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { filterProducts, validateProduct } from './products.mjs';
 import { readImportForm, previewImport, applyImport, ImportError } from './imports.mjs';
 import { exportInventory, selectExportProducts, ExportError } from './exports.mjs';
@@ -45,6 +45,7 @@ const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 const PASSWORD_MIN_LENGTH = 12;
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const stylesheet = readFile(join(sourceDirectory, '..', 'public', 'style.css'));
+const catalogScript = readFile(join(sourceDirectory, '..', 'public', 'catalog.js'));
 
 function readCookies(header = '') {
   return Object.fromEntries(header.split(';').map((part) => {
@@ -120,7 +121,7 @@ function saveProduct(database, response, { form, session, product, isNew, existi
     }
     throw error;
   }
-  return redirect(response, '/inventory?saved=1');
+  return redirect(response, '/products?saved=1');
 }
 
 function createSession(sessions, user) {
@@ -137,7 +138,7 @@ function createSession(sessions, user) {
 
 function startSession(response, sessions, user) {
   const { id } = createSession(sessions, user);
-  return redirect(response, '/inventory', {
+  return redirect(response, '/products', {
     'set-cookie': `inventory_session=${encodeURIComponent(id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}`,
   });
 }
@@ -237,9 +238,14 @@ export function createInventoryServer({
         return;
       }
 
+      if (request.method === 'GET' && url.pathname === '/assets/catalog.js') {
+        response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'x-content-type-options': 'nosniff' });
+        return response.end(await catalogScript);
+      }
+
       if (request.method === 'GET' && url.pathname === '/') {
         if (!hasAdministrator(database)) return sendHtml(response, setupPage({ setupToken: initialSetupToken }));
-        return redirect(response, session ? '/inventory' : '/login');
+        return redirect(response, session ? '/products' : '/login');
       }
 
       if (request.method === 'GET' && url.pathname === '/setup') {
@@ -432,13 +438,22 @@ export function createInventoryServer({
         }
       }
 
-      if (request.method === 'GET' && url.pathname === '/inventory') {
+      if (request.method === 'GET' && url.pathname === '/purchase-orders') {
+        return sendHtml(response, purchaseOrdersPage(session));
+      }
+
+      if (request.method === 'GET' && ['/inventory', '/products'].includes(url.pathname)) {
         const params = url.searchParams;
+        // Preserve old archived bookmarks while keeping Inventory active-only.
+        if (url.pathname === '/inventory' && params.get('archived') === 'on') {
+          return redirect(response, `/products?${params}`);
+        }
         const message = params.get('msg') === 'archived' ? 'Repuesto archivado.'
           : params.get('msg') === 'restored' ? 'Repuesto restaurado.'
           : params.get('imported') === '1' ? 'Importación aplicada.'
           : params.get('saved') === '1' ? 'Repuesto guardado.' : '';
-        return authenticatedPage(response, inventoryPage({
+        const render = url.pathname === '/products' ? productsPage : inventoryPage;
+        return authenticatedPage(response, render({
           ...session,
           products: filterProducts(listProducts(database), params),
           filters: inventoryFilters(params),
@@ -554,7 +569,7 @@ export function createInventoryServer({
         if (!product) return sendHtml(response, notFoundPage(session), 404);
         const archiving = archiveMatch[2] === 'archive';
         setProductArchived(database, product.id, archiving);
-        return redirect(response, archiving ? '/inventory?msg=archived' : '/inventory?msg=restored&archived=on');
+        return redirect(response, archiving ? '/products?msg=archived' : '/products?msg=restored&archived=on');
       }
 
       const editMatch = url.pathname.match(/^\/products\/(\d+)\/edit$/);
@@ -565,6 +580,11 @@ export function createInventoryServer({
       }
 
       const updateMatch = url.pathname.match(/^\/products\/(\d+)$/);
+      if (request.method === 'GET' && updateMatch) {
+        const product = findProduct(database, Number(updateMatch[1]));
+        if (!product) return sendHtml(response, notFoundPage(session), 404);
+        return sendHtml(response, productDetailPage({ ...session, product }));
+      }
       if (request.method === 'POST' && updateMatch) {
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
@@ -580,7 +600,7 @@ export function createInventoryServer({
     } catch (error) {
       const message = error.message === 'El formulario supera el tamaño permitido.' ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
       const filters = inventoryFilters(url.searchParams);
-      sendHtml(response, session ? inventoryPage({ ...session, products: filterProducts(listProducts(database), url.searchParams), filters, message }) : loginPage({ error: message }), 400);
+      sendHtml(response, session ? productsPage({ ...session, products: filterProducts(listProducts(database), url.searchParams), filters, message }) : loginPage({ error: message }), 400);
     }
   });
 

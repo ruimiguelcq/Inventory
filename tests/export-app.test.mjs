@@ -58,7 +58,7 @@ test('the inventory downloads all articles as Excel values without changing arti
   await seed(a);
   const before = await (await a.get('/inventory')).text();
   const history = await (await a.get('/products/1/history')).text();
-  const link = before.match(/href="([^"]+)"[^>]*>Exportar todo a Excel<\/a>/)?.[1];
+  const link = before.match(/href="([^"]+)"[^>]*>Exportar<\/a>/)?.[1];
   assert.ok(link, 'The inventory offers a complete Excel download');
   const { sheet } = await download(await a.get(link.replaceAll('&amp;', '&')));
   assert.equal(sheet.rowCount, 4);
@@ -142,7 +142,7 @@ test('consulta and gestión can export all or selected articles while anonymous 
     const login = await a.post('/login', { username: role, password: 'equipo-seguro-123' });
     a.cookie = login.headers.get('set-cookie').split(';')[0];
     const html = await (await a.get('/inventory')).text();
-    assert.match(html, /Exportar todo a Excel/);
+    assert.match(html, />Exportar<\/a>/);
     assert.match(html, /Exportar selección a Excel/);
     assert.equal((await download(await a.get('/exports?scope=all'))).sheet.rowCount, 4);
     assert.equal((await download(await a.post('/exports', { csrfToken: a.token(html), scope: 'selected', id: '2' }))).sheet.getCell('A2').value, 'B-2');
