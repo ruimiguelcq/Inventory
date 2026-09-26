@@ -525,7 +525,7 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
   box-shadow: 0 1px 3px rgb(21 47 62 / 6%);
 }
 /* Shopify-like typography: small, airy labels and calmer headings. */
-.product-form--split .form-section h2 { font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+.product-form--split .form-section h2 { margin: 0 0 14px; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
 .product-form--split .field { gap: 6px; }
 .product-form--split .field label { font-size: 12px; font-weight: 500; color: #303030; letter-spacing: 0.01em; }
 .product-form--split .field input,
@@ -540,15 +540,16 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
 .inventory-card__head {
   display: flex;
   justify-content: space-between;
-  padding: 8px 14px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--line);
   background: #f7f8f8;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
-.inventory-card__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 13px; }
-.inventory-card__row input { width: 130px; min-height: 36px; padding: 7px 10px; border: 1px solid #bccbd2; border-radius: 6px; text-align: right; }
+.inventory-card__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; font-size: 12.5px; }
+.inventory-card__row input { width: 96px; min-height: 32px; padding: 6px 9px; border: 1px solid #bccbd2; border-radius: 6px; text-align: right; }
 .inventory-card__value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .currency-input { display: flex; align-items: center; border: 1px solid #bccbd2; border-radius: 6px; background: #fff; }
 .currency-input:hover { border-color: #8499a4; }
