@@ -1,31 +1,37 @@
-// Selection state is read from the live DOM, so delegated events keep working after a swap.
-const updateSelection = () => {
-  const selectAll = document.querySelector('[data-select-all]');
-  const selections = [...document.querySelectorAll('[data-row-selection]')];
-  const count = selections.filter((input) => input.checked).length;
-  if (selectAll) {
-    selectAll.checked = count > 0 && count === selections.length;
-    selectAll.indeterminate = count > 0 && count < selections.length;
-  }
-  document.querySelectorAll('[data-requires-selection]').forEach((button) => { button.disabled = count === 0; });
-  const counter = document.querySelector('[data-selection-count]');
-  if (counter) counter.textContent = `${count} seleccionados`;
+// Inline stock editing: the Disponible number opens a small editor in place. Without JavaScript the
+// number remains a link to the full Ajustar existencias page. Events are delegated so the editor
+// keeps working after an instant-search swap replaces the results.
+const closeEditor = (form) => {
+  form.hidden = true;
+  form.closest('[data-stock-cell]')?.querySelector('[data-stock-open]')?.removeAttribute('hidden');
 };
-document.addEventListener('change', (event) => {
-  const target = event.target;
-  if (target.matches('[data-select-all]')) {
-    document.querySelectorAll('[data-row-selection]').forEach((input) => { input.checked = target.checked; });
+document.addEventListener('click', (event) => {
+  const open = event.target.closest('[data-stock-open]');
+  if (open) {
+    event.preventDefault();
+    const form = open.closest('[data-stock-cell]')?.querySelector('[data-stock-form]');
+    if (!form) return;
+    form.hidden = false;
+    open.hidden = true;
+    form.querySelector('input[name="quantity"]')?.focus();
+    return;
   }
-  if (target.matches('[data-select-all], [data-row-selection]')) updateSelection();
+  const cancel = event.target.closest('[data-stock-cancel]');
+  if (cancel) closeEditor(cancel.closest('[data-stock-form]'));
 });
-const clearSelection = () => {
-  document.querySelectorAll('[data-row-selection]').forEach((input) => { input.checked = false; });
-  updateSelection();
-};
-document.querySelector('.catalog-toolbar')?.addEventListener('input', clearSelection);
-document.querySelector('.catalog-toolbar')?.addEventListener('change', clearSelection);
-document.querySelectorAll('.pagination a').forEach((link) => link.addEventListener('click', clearSelection));
-window.addEventListener('pageshow', clearSelection);
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  document.querySelectorAll('[data-stock-form]:not([hidden])').forEach(closeEditor);
+});
+// "Fijar en" starts from the stored quantity for a recount; "Ajustar" is a signed delta, so it
+// starts empty to avoid adding the current stock to itself.
+document.addEventListener('change', (event) => {
+  const select = event.target.closest('.stock-editor select[name="operation"]');
+  if (!select) return;
+  const input = select.closest('[data-stock-form]')?.querySelector('input[name="quantity"]');
+  if (!input) return;
+  input.value = select.value === 'adjust' ? '' : (input.dataset.current ?? '');
+});
 
 // Instant search: fetch the same server-rendered view and swap the results in place so the field
 // keeps focus. The form's normal GET submission stays as the fallback when scripting fails.
@@ -49,7 +55,6 @@ for (const form of document.querySelectorAll('[data-instant-search]')) {
       if (exportLink && freshExport) exportLink.setAttribute('href', freshExport.getAttribute('href'));
       currentUrl = url;
       history.replaceState(null, '', url);
-      updateSelection();
     } catch {
       // Keep the current results; submitting the form still works.
     }

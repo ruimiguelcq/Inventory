@@ -341,7 +341,7 @@ test('demotion to consulta rejects a write whose request body is still arriving'
   const accounts = await fetch(`${baseUrl}/users`, { headers: { cookie: administratorCookie } });
   const userId = (await accounts.text()).match(/<td>gestion<\/td>[\s\S]*?action="\/users\/(\d+)\/role"/)[1];
   const adminToken = await getCsrfToken();
-  for (const path of ['/products', '/products/1', '/products/1/stock', '/products/1/stock/confirm', '/products/1/archive', '/products/1/restore', '/products/archive', '/products/restore']) {
+  for (const path of ['/products', '/products/1', '/products/1/stock', '/products/1/stock/confirm', '/products/1/stock/apply', '/products/1/archive', '/products/1/restore']) {
     assert.equal((await postForm(`/users/${userId}/role`, { csrfToken: adminToken, role: 'manager' })).status, 303);
     const pending = request(`${baseUrl}${path}`, {
       method: 'POST', headers: { cookie, Expect: '100-continue', 'content-type': 'application/x-www-form-urlencoded' },
@@ -471,4 +471,30 @@ test('stock and its complete history survive restart', async () => {
   administratorCookie = await signIn(administratorUsername, 'marina-segura-123');
   const after = await readPage('/products/1/history');
   assert.equal(after.replace(/name="csrfToken" value="[^"]+"/g, ''), before.replace(/name="csrfToken" value="[^"]+"/g, ''));
+});
+
+test('Inventario saves a Disponible adjustment in one step and records it in the history', async () => {
+  assert.match(await readPage('/inventory'), /action="\/products\/1\/stock\/apply"/);
+  const applied = await postForm('/products/1/stock/apply', { csrfToken: await getCsrfToken(), operation: 'set', quantity: '7', reason: '<Recuento inline>' });
+  assert.equal(applied.status, 303);
+  assert.equal(applied.headers.get('location'), '/inventory?msg=stocked');
+  const inventory = await readPage('/inventory?msg=stocked');
+  assert.match(inventory, /Existencias actualizadas\./);
+  assert.match(inventory, /class="quantity-cell inventory-ok"[^>]*>\s*<a class="stock-value"[^>]*>7<\/a>/);
+  const history = await readPage('/products/1/history');
+  assert.match(history, /&lt;Recuento inline&gt;/);
+  assert.match(history, /<td>7<\/td>/);
+
+  // The search survives the round trip.
+  const filtered = await postForm('/products/1/stock/apply', { csrfToken: await getCsrfToken(), operation: 'adjust', quantity: '1', q: 'biela' });
+  assert.equal(filtered.headers.get('location'), '/inventory?msg=stocked&q=biela');
+
+  // Validation and permissions are unchanged.
+  const csrfToken = await getCsrfToken();
+  assert.equal((await postForm('/products/1/stock/apply', { csrfToken, operation: 'set', quantity: '-1' })).status, 400);
+  assert.equal((await postForm('/products/1/stock/apply', { csrfToken, operation: 'other', quantity: '1' })).status, 400);
+  assert.equal((await postForm('/products/1/stock/apply', { operation: 'set', quantity: '1' })).status, 403);
+  const viewer = await signIn('consulta', 'consulta-segura-123');
+  assert.equal((await postForm('/products/1/stock/apply', { csrfToken: await getCsrfToken(viewer), operation: 'set', quantity: '1' }, viewer)).status, 403);
+  assert.equal((await postForm('/products/99999/stock/apply', { csrfToken, operation: 'set', quantity: '1' })).status, 404);
 });

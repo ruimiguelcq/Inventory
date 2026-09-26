@@ -85,22 +85,23 @@ test('Inventario searches by P/N or name and ignores the retired filters', async
   }
 });
 
-test('Inventario shows a read-only Disponible coloured green or red like Productos', async (t) => {
+test('Inventario colours the editable Disponible number green or red like Productos', async (t) => {
   const a = await app(t);
   await seed(a);
   // JUNTA min 2 qty 0, KIT-BOMBA min 4 qty 2 and ANODO (no minimum, fallback 10) qty 3 are red;
   // FILTRO meets its minimum of 1 and is green.
   const page = await (await a.get('/inventory')).text();
-  assert.match(page, /class="quantity-cell inventory-low">0</);
-  assert.match(page, /class="quantity-cell inventory-low">2</);
-  assert.match(page, /class="quantity-cell inventory-low">3</);
-  assert.match(page, /class="quantity-cell inventory-ok">1</);
-  // Read-only: no badges and no `N existencias` label.
+  const cell = (level, value) => new RegExp(`class="quantity-cell inventory-${level}"[^>]*>\\s*<a class="stock-value"[^>]*>${value}</a>`);
+  assert.match(page, cell('low', 0));
+  assert.match(page, cell('low', 2));
+  assert.match(page, cell('low', 3));
+  assert.match(page, cell('ok', 1));
+  // The figures are not badges and never say `N existencias`.
   assert.doesNotMatch(page, /badge-out|badge-low|\d+ existencias/);
 
   // Reaching the minimum flips the level to green.
   await setStock(a, 3, 4);
-  assert.match(await (await a.get('/inventory')).text(), /class="quantity-cell inventory-ok">4</);
+  assert.match(await (await a.get('/inventory')).text(), cell('ok', 4));
 });
 
 test('archiving retires an article from the active list, preserves its history and restores it', async (t) => {
@@ -121,8 +122,6 @@ test('archiving retires an article from the active list, preserves its history a
   assert.equal(legacy.headers.get('location'), '/products?archived=on');
   const archived = await (await a.get('/products?archived=on')).text();
   assert.match(archived, /JUNTA/);
-  assert.match(archived, /Desarchivar/);
-  assert.doesNotMatch(archived, /Ajustar existencias/);
   assert.doesNotMatch(archived, /ANODO|KIT-BOMBA|FILTRO/);
 
   // Archiving keeps the movement history untouched.
@@ -147,8 +146,7 @@ test('archiving retires an article from the active list, preserves its history a
   assert.equal(archivedError.status, 400);
   const archivedFallback = await archivedError.text();
   assert.match(archivedFallback, /JUNTA/);
-  assert.match(archivedFallback, /Desarchivar/);
-  assert.doesNotMatch(archivedFallback, /Ajustar existencias|ANODO/);
+  assert.doesNotMatch(archivedFallback, /ANODO/);
 
   const restore = await a.post('/products/1/restore', { csrfToken: a.csrfToken });
   assert.equal(restore.status, 303);
@@ -186,12 +184,14 @@ test('Inventario shows only Producto, P/N and Disponible with an instant search'
   assert.doesNotMatch(page, /name="presentation"|name="category"|name="brand"|name="outOfStock"|name="lowStock"|name="pageSize"|data-column|data-column-toggle/);
   assert.doesNotMatch(page, /class="filter-bar"/);
 
-  // Instant search and the selection stay; Importar/Exportar live in the header.
+  // Instant search, the inline stock editor and Importar/Exportar remain; bulk selection is gone.
   assert.match(page, /class="catalog-toolbar"[^>]*data-instant-search/);
   assert.match(page, /placeholder="Buscar por P\/N o nombre"/);
   assert.match(page, /data-catalog-results/);
-  assert.match(page, /formaction="\/purchase-orders\/add-selection"/);
-  assert.match(page, /href="\/products\/1\/stock">Ajustar existencias/);
+  assert.doesNotMatch(page, /formaction="\/purchase-orders\/add-selection"|type="checkbox" name="id"/);
+  assert.match(page, /action="\/products\/1\/stock\/apply"/);
+  assert.match(page, /<option value="set">Fijar en<\/option>/);
+  assert.match(page, /<option value="adjust">Ajustar<\/option>/);
   assert.match(page, /href="\/products\/1\/history">Historial/);
   assert.match(page, /href="\/imports\?view=inventory">Importar<\/a>/);
   assert.match(page, /href="\/exports\?[^"]*">Exportar<\/a>/);
@@ -284,6 +284,7 @@ test('desktop sections, product details and management links respect every role 
     assert.match(html, /href="\/products\/1\/history"/);
     assert.equal(html.includes('Editar producto'), role !== 'viewer');
     assert.equal(html.includes('Ajustar existencias'), role !== 'viewer');
+    assert.equal(html.includes('>Archivar</button>'), role !== 'viewer');
     assert.equal((await a.get('/products/9999')).status, 404);
     for (const path of ['/users', '/backups', '/products/1/edit', '/products/1/stock', '/imports']) {
       assert.equal((await a.get(path)).status, path === '/users' || path === '/backups' ? (role === 'admin' ? 200 : 403) : (role === 'viewer' ? 403 : 200));
@@ -298,7 +299,7 @@ test('desktop sections, product details and management links respect every role 
   }
 });
 
-const rowIds = (html) => [...html.matchAll(/name="id" value="(\d+)"/g)].map((match) => Number(match[1]));
+const rowIds = (html) => [...html.matchAll(/class="product-description" href="\/products\/(\d+)"/g)].map((match) => Number(match[1]));
 
 test('Productos shows the agreed columns and header without the retired filters', async (t) => {
   const a = await app(t);
@@ -317,7 +318,7 @@ test('Productos shows the agreed columns and header without the retired filters'
   // Instant search and the state selector replace the filter bar; no size selector or stats.
   assert.match(page, /class="catalog-toolbar"[^>]*data-instant-search/);
   assert.match(page, /data-catalog-results/);
-  assert.match(page, /formaction="\/purchase-orders\/add-selection"/);
+  assert.doesNotMatch(page, /formaction="\/purchase-orders\/add-selection"|type="checkbox" name="id"/);
   assert.match(page, /name="q"/);
   assert.match(page, /name="state"/);
   assert.doesNotMatch(page, /class="filter-bar"/);
@@ -325,10 +326,11 @@ test('Productos shows the agreed columns and header without the retired filters'
   assert.doesNotMatch(page, /<th[^>]*>Presentación<\/th>|<th[^>]*>Marca<\/th>/);
   assert.doesNotMatch(page, /Canales|Catálogos|Más acciones/);
 
-  // The header keeps only Agregar producto, Importar and Exportar.
-  assert.match(page, /href="\/products\/new">Agregar producto</);
-  assert.match(page, /href="\/imports\?view=products">Importar<\/a>/);
-  assert.match(page, /href="\/exports\?[^"]*">Exportar<\/a>/);
+  // The header keeps only Importar, Exportar and Agregar producto, in that order.
+  const importAt = page.indexOf('>Importar</a>');
+  const exportAt = page.indexOf('>Exportar</a>');
+  const addAt = page.indexOf('>Agregar producto</a>');
+  assert.ok(importAt > -1 && importAt < exportAt && exportAt < addAt, 'header order is Importar, Exportar, Agregar producto');
 });
 
 test('Productos searches by P/N or name and defaults to active articles', async (t) => {
@@ -446,34 +448,6 @@ test('Inventario paginates a fixed 50 rows and stays active-only whatever the qu
     assert.deepEqual(rowIds(await (await a.get(`/inventory?${query}`)).text()), []);
   }
   assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [56]);
-});
-
-test('bulk archive validates the entire selection and permissions and preserves stock and history', async (t) => {
-  const a = await app(t);
-  await seed(a);
-  const select = (ids, token = a.csrfToken) => new URLSearchParams([['csrfToken', token], ...ids.map((id) => ['id', String(id)])]);
-  for (const action of ['archive', 'restore']) {
-    for (const ids of [[], [1, 9999], [1, '2x'], [0], [-1], ['1.5'], ['9007199254740992'], Array(101).fill(1)]) {
-      assert.equal((await a.post(`/products/${action}`, select(ids))).status, 400);
-    }
-    assert.equal((await a.post(`/products/${action}`, select([1], 'invalid'))).status, 403);
-  }
-  assert.equal(rowIds(await (await a.get('/products')).text()).length, 4);
-  const history = await (await a.get('/products/3/history')).text();
-  assert.equal((await a.post('/products/archive', select([1, 3, 3]))).status, 303);
-  assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [1, 3]);
-  assert.match(await (await a.get('/products/3')).text(), /Existencias<\/dt><dd>2/);
-  assert.equal(await (await a.get('/products/3/history')).text(), history);
-  await a.post('/users', { csrfToken: a.csrfToken, username: 'manager', password: 'equipo-seguro-123', role: 'manager' });
-  await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' });
-  const managerToken = await a.signIn('manager', 'equipo-seguro-123');
-  assert.equal((await a.post('/products/restore', select([1, 3], managerToken))).status, 303);
-  const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
-  for (const action of ['archive', 'restore']) {
-    assert.equal((await a.post(`/products/${action}`, select([1, 3], viewerToken))).status, 403);
-  }
-  assert.doesNotMatch(await (await a.get('/products')).text(), /Archivar selección|Desarchivar selección/);
-  assert.equal(rowIds(await (await a.get('/products')).text()).length, 4);
 });
 
 test('categories and assignments survive restart and a verified full-state backup restore', async (t) => {

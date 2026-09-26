@@ -136,19 +136,37 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
   exportParams.set('scope', 'all');
   const exportHref = `/exports?${exportParams.toString()}`;
 
-  // Inventory reads the same green/red level as Products in a read-only Disponible column and
-  // keeps its per-row stock and history actions inline; Products archives/restores via the selection.
+  // Inventory edits the read-only-to-viewers Disponible number in place; Products keeps its
+  // read-only `N existencias` cell coloured by the product minimum.
+  const stockCell = (product) => {
+    const level = `quantity-cell inventory-${inventoryLevel(product)}`;
+    if (!canManage) return `<td class="${level}">${product.quantity}</td>`;
+    return `<td class="${level}" data-stock-cell>
+        <a class="stock-value" href="/products/${product.id}/stock" data-stock-open aria-label="Ajustar existencias de ${escapeHtml(product.part_number)}">${product.quantity}</a>
+        <form class="stock-editor" method="post" action="/products/${product.id}/stock/apply" data-stock-form hidden>
+          <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+          <input type="hidden" name="q" value="${escapeHtml(filters.q ?? '')}">
+          <select name="operation" aria-label="Operación">
+            <option value="set">Fijar en</option>
+            <option value="adjust">Ajustar</option>
+          </select>
+          <input type="number" name="quantity" step="1" inputmode="numeric" value="${product.quantity}" data-current="${product.quantity}" aria-label="Cantidad de ${escapeHtml(product.part_number)}">
+          <input type="text" name="reason" maxlength="500" placeholder="Motivo (opcional)" aria-label="Motivo">
+          <button class="button button-primary" type="submit">Guardar</button>
+          <button class="button button-quiet" type="button" data-stock-cancel>Cancelar</button>
+        </form>
+      </td>`;
+  };
+
   const rows = products.map((product) => {
     if (inventory) {
       return `<tr>
-      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
-      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a>${canManage ? ` · <a href="/products/${product.id}/stock">Ajustar existencias</a>` : ''} · <a href="/products/${product.id}/history">Historial</a></span></td>
+      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a> · <a href="/products/${product.id}/history">Historial</a></span></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
-      <td class="quantity-cell inventory-${inventoryLevel(product)}">${product.quantity}</td>
+      ${stockCell(product)}
     </tr>`;
     }
     return `<tr>
-      <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
       <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
       <td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>
@@ -161,13 +179,11 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
 
   const header = inventory
     ? `<thead><tr>
-      <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
       <th scope="col">Producto</th>
       <th scope="col">P/N</th>
       <th scope="col" class="align-right">Disponible</th>
     </tr></thead>`
     : `<thead><tr>
-      <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
       <th scope="col">P/N</th>
       <th scope="col">Producto</th>
       <th scope="col">Estado</th>
@@ -211,24 +227,12 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
   const inventoryToolbar = catalogToolbar();
   const productsToolbar = catalogToolbar(stateSelector);
 
-  const selectionActions = `
-    <form id="export-selection" class="selection-actions" method="post" action="/exports">
-      <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
-      <input type="hidden" name="view" value="${view}">
-      <input type="hidden" name="scope" value="selected">
-      <span data-selection-count role="status">0 seleccionados</span>
-      <button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>
-      ${canManage ? '<button class="button button-secondary" type="submit" formaction="/purchase-orders/add-selection" data-requires-selection disabled>Añadir a lista de compra</button>' : ''}
-      ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
-        <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
-    </form>`;
-
   const headerActions = inventory
     ? `${canManage ? `<a class="button button-secondary" href="${importHref}">Importar</a>` : ''}
       <a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>`
-    : `${canManage ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}
-      ${canManage ? `<a class="button button-secondary" href="${importHref}">Importar</a>` : ''}
-      <a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>`;
+    : `${canManage ? `<a class="button button-secondary" href="${importHref}">Importar</a>` : ''}
+      <a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>
+      ${canManage ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}`;
 
   const pageLink = (number, label) => {
     const params = new URLSearchParams(queryParams);
@@ -253,7 +257,6 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
         <div>
           <h2>${headingTitle}</h2>
         </div>
-        ${selectionActions}
       </div>
       ${inventory ? inventoryToolbar : productsToolbar}
       ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
@@ -398,47 +401,6 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
   return page(`Compra #${order.id}`, content, { ...session, active: 'purchases' });
 }
 
-// Review step for adding an Inventory selection: active articles only, new list or existing draft.
-export function purchaseSelectionPage({ products = [], orders = [], confirmationToken = '', error = '', ...session }) {
-  const rows = products.map((product) => {
-    const status = stockStatus(product);
-    return `<tr>
-      <td class="part-number">${escapeHtml(product.part_number)}</td>
-      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
-      <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
-    </tr>`;
-  }).join('');
-  const destinationOptions = `<option value="new">Nueva lista de compra</option>
-    ${orders.map((order) => `<option value="${order.id}">Compra #${order.id} · ${order.line_count} ${order.line_count === 1 ? 'artículo' : 'artículos'}</option>`).join('')}`;
-
-  return page('Añadir a lista de compra', `
-    <div class="breadcrumb"><a href="/inventory">Inventario</a><span aria-hidden="true">/</span><span>Añadir a lista de compra</span></div>
-    <div class="page-heading"><div><p class="eyebrow">Selección revisada</p><h1>Añadir a lista de compra</h1>
-      <p class="page-subtitle">Solo se añaden artículos activos. Los artículos que ya están en la lista conservan su línea y cantidad; las líneas nuevas empiezan sin cantidad.</p></div></div>
-    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
-    <section class="inventory-panel" aria-label="Artículos seleccionados">
-      <h2>${products.length} ${products.length === 1 ? 'artículo seleccionado' : 'artículos seleccionados'}</h2>
-      <div class="table-scroll"><table><thead><tr>
-        <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Existencias</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>
-    </section>
-    <form class="product-form" method="post" action="/purchase-orders/add-selection/confirm">
-      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
-      <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
-      <section class="form-section"><h2>Lista de destino</h2>
-        <div class="form-grid"><div class="field field-wide">
-          <label for="destination">Añadir a</label>
-          <select id="destination" name="destination" required>${destinationOptions}</select>
-          <p class="form-hint">Las listas archivadas no se ofrecen como destino; reábrelas para seguir editándolas.</p>
-        </div></div>
-      </section>
-      <div class="form-actions">
-        <a class="button button-quiet" href="/inventory">Cancelar</a>
-        <button class="button button-primary" type="submit">Añadir a la lista</button>
-      </div>
-    </form>`, { ...session, active: 'inventory' });
-}
-
 export function productDetailPage({ product, ...session }) {
   return page(product.description, `<div class="breadcrumb"><a href="/products">Productos</a><span>/</span><span>Ficha del producto</span></div>
     <div class="page-heading"><h1>${escapeHtml(product.description)}</h1>
@@ -460,6 +422,10 @@ export function productDetailPage({ product, ...session }) {
       </dl>
       <a class="button button-secondary" href="/products/${product.id}/history">Historial</a>
       ${canManageInventory(session.role) && !product.archived ? `<a class="button button-secondary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}
+      ${canManageInventory(session.role) ? `<form class="inline-form" method="post" action="/products/${product.id}/${product.archived ? 'restore' : 'archive'}">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <button class="button button-secondary" type="submit">${product.archived ? 'Desarchivar' : 'Archivar'}</button>
+      </form>` : ''}
     </section>`, { ...session, active: 'products' });
 }
 

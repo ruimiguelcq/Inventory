@@ -200,7 +200,7 @@ button, input, select, textarea { font: inherit; }
 .table-scroll { overflow-x: auto; }
 .export-hint { margin: 12px 19px; color: var(--muted); font-size: 12px; }
 
-table { width: 100%; border-collapse: collapse; text-align: left; }
+table { width: 100%; border-collapse: collapse; text-align: center; }
 th, td { padding: 10px 12px; border-bottom: 1px solid #e8e8e8; vertical-align: middle; }
 th {
   background: #f7f9fa;
@@ -253,9 +253,44 @@ tbody tr:hover { background: #f7fbfa; }
   font-weight: 600;
 }
 .muted { color: var(--muted); }
-.quantity-cell, .align-right { text-align: right; font-variant-numeric: tabular-nums; }
+.quantity-cell, .align-right { text-align: center; font-variant-numeric: tabular-nums; }
 .inventory-ok { color: #1f6257; font-weight: 600; }
 .inventory-low { color: var(--error); font-weight: 600; }
+.stock-value {
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.stock-value:hover { text-decoration: underline; }
+[data-stock-cell] { position: relative; }
+.stock-editor {
+  position: absolute;
+  right: 8px;
+  top: calc(100% - 6px);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 40, 48, 0.18);
+  text-align: left;
+}
+.stock-editor[hidden] { display: none; }
+.stock-editor select, .stock-editor input[type="number"], .stock-editor input[type="text"] {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid #bccbd2;
+  border-radius: 5px;
+}
+.stock-editor input[type="number"] { width: 78px; }
+.stock-editor input[type="text"] { width: 170px; }
 .line-quantity {
   width: 120px;
   min-height: 38px;
@@ -264,7 +299,7 @@ tbody tr:hover { background: #f7fbfa; }
   border-radius: 5px;
   background: #fff;
   color: var(--ink);
-  text-align: right;
+  text-align: center;
 }
 .line-quantity:hover { border-color: #8499a4; }
 .row-action { text-align: right; white-space: nowrap; }
@@ -427,7 +462,7 @@ tbody tr:hover { background: #f7fbfa; }
 
 .filter-check input { margin: 0; }
 
-.selection-actions, .pagination, .pagination > div {
+.pagination, .pagination > div {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -435,7 +470,7 @@ tbody tr:hover { background: #f7fbfa; }
 }
 
 .pagination { justify-content: space-between; padding: 14px 19px; border-top: 1px solid var(--line); }
-[data-selection-count], .pagination { font-size: 13px; }
+.pagination { font-size: 13px; }
 
 .badge {
   display: inline-block;

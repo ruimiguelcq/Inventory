@@ -12,21 +12,10 @@ export function parseExportView(params) {
   return view;
 }
 
-// `scope=all` exports every article matching the view filters, across all pages.
-// `scope=selected` is always explicit and never falls back to the complete catalog.
+// The complete export covers every article matching the view search, across all pages.
 export function selectExportProducts(products, params) {
-  const scope = params.get('scope');
-  if (scope === 'all') return filterProducts(products, params);
-  if (scope !== 'selected') throw new ExportError('Elige una exportación completa o de la selección.');
-  const values = params.getAll('id');
-  if (!values.length) throw new ExportError('Selecciona al menos un artículo para exportar.');
-  if (values.some((value) => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
-    throw new ExportError('La selección de artículos no es válida. Vuelve a seleccionarlos.');
-  }
-  const ids = new Set(values.map(Number));
-  const selected = products.filter((product) => ids.has(product.id));
-  if (selected.length !== ids.size) throw new ExportError('Algún artículo de la selección ya no existe. Vuelve a seleccionarlos.');
-  return selected;
+  if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
+  return filterProducts(products, params);
 }
 
 async function writeSheet(columns, products, title) {

@@ -23,10 +23,10 @@ import {
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, purchaseSelectionPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
-import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
-import { addPurchaseLine, addSelectionToPurchase, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
+import { CatalogError, saveCatalogProduct } from './catalog.mjs';
+import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
 import { exportPurchaseOrder, exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
@@ -409,10 +409,9 @@ export function createInventoryServer({
         return response.end(image.bytes);
       }
 
-      // Export is read-only for every authenticated role; POST keeps large selections out of the URL.
-      if (['GET', 'POST'].includes(request.method) && url.pathname === '/exports') {
-        const params = request.method === 'POST' ? await readForm(request, 2 * 1024 * 1024) : url.searchParams;
-        if (request.method === 'POST' && !validateCsrf(params, session)) return sendHtml(response, forbiddenPage(session), 403);
+      // Export is read-only for every authenticated role and always covers the whole search.
+      if (request.method === 'GET' && url.pathname === '/exports') {
+        const params = url.searchParams;
         let view = 'inventory';
         try {
           view = parseExportView(params);
@@ -560,74 +559,6 @@ export function createInventoryServer({
         }
       }
 
-      // Inventory selection -> purchase list: review, choose destination, then confirm once.
-      if (['/purchase-orders/add-selection', '/purchase-orders/add-selection/confirm'].includes(url.pathname)) {
-        if (request.method !== 'POST') return sendHtml(response, notFoundPage(session), 404);
-        const form = await readForm(request, 2 * 1024 * 1024);
-        if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
-        const user = findUser(database, session.userId);
-        if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
-        const storedSession = sessions.get(session.id);
-        const draftOrders = listPurchaseOrders(database).filter((order) => order.status === 'draft');
-        const selectionView = form.get('view') === 'products' ? 'products' : 'inventory';
-        const renderSelectionError = (message) => sendHtml(response, selectionView === 'products'
-          ? productsPage({ ...session, ...catalogOptions(url.searchParams), message })
-          : inventoryPage({ ...session, ...catalogOptions(url.searchParams, true), message }), 400);
-
-        if (url.pathname === '/purchase-orders/add-selection') {
-          const values = form.getAll('id');
-          if (!values.length || values.length > 100 || values.some((value) => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
-            return renderSelectionError('Selecciona entre 1 y 100 artículos activos para añadir a una lista de compra.');
-          }
-          const ids = [...new Set(values.map(Number))];
-          const products = listProducts(database);
-          const selected = ids.map((id) => products.find((product) => product.id === id));
-          if (selected.some((product) => !product)) return renderSelectionError('Algún artículo de la selección ya no existe. Vuelve a seleccionarlos.');
-          if (selected.some((product) => product.archived)) return renderSelectionError('Solo puedes añadir artículos activos a una lista de compra.');
-          const confirmationToken = randomBytes(32).toString('base64url');
-          storedSession.purchaseSelection = { ids, confirmationToken };
-          return sendHtml(response, purchaseSelectionPage({ ...session, products: selected, orders: draftOrders, confirmationToken }));
-        }
-
-        const pending = storedSession.purchaseSelection;
-        const renderReview = (products, error) => sendHtml(response, purchaseSelectionPage({
-          ...session, products, orders: draftOrders, confirmationToken: pending?.confirmationToken ?? '', error,
-        }), 400);
-        if (!pending || !matchesToken(form.get('confirmationToken') ?? '', pending.confirmationToken)) {
-          delete storedSession.purchaseSelection;
-          return renderSelectionError('Vuelve a seleccionar los artículos y repite la operación para confirmar.');
-        }
-        const products = listProducts(database);
-        const selected = pending.ids.map((id) => products.find((product) => product.id === id));
-        if (selected.some((product) => !product || product.archived)) {
-          delete storedSession.purchaseSelection;
-          return renderSelectionError('Algún artículo de la selección ya no está activo. Vuelve a seleccionarlos.');
-        }
-        const destination = form.get('destination') ?? 'new';
-        let purchaseOrderId = null;
-        if (destination !== 'new') {
-          if (!/^[1-9]\d*$/.test(destination) || !Number.isSafeInteger(Number(destination))) {
-            return renderReview(selected, 'Elige una lista de compra válida.');
-          }
-          const order = findPurchaseOrder(database, Number(destination));
-          if (!order || order.status !== 'draft') {
-            return renderReview(selected, 'Esa lista ya no está en borrador. Elige otra lista o crea una nueva.');
-          }
-          purchaseOrderId = order.id;
-        }
-        try {
-          const orderId = addSelectionToPurchase(database, session.userId, { purchaseOrderId, productIds: pending.ids });
-          delete storedSession.purchaseSelection;
-          return redirect(response, `/purchase-orders/${orderId}?added=selection`);
-        } catch (error) {
-          if (!(error instanceof PurchaseError)) throw error;
-          if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
-          if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
-          delete storedSession.purchaseSelection;
-          return renderSelectionError(error.message);
-        }
-      }
-
       const purchaseOrderMatch = url.pathname.match(/^\/purchase-orders\/(\d+)$/);
       const purchaseAddMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines$/);
       const purchaseRemoveMatch = url.pathname.match(/^\/purchase-orders\/(\d+)\/lines\/(\d+)\/remove$/);
@@ -710,6 +641,7 @@ export function createInventoryServer({
         }
         const message = params.get('msg') === 'archived' ? 'Repuesto archivado.'
           : params.get('msg') === 'restored' ? 'Repuesto restaurado.'
+          : params.get('msg') === 'stocked' ? 'Existencias actualizadas.'
           : params.get('imported') === '1' ? 'Importación aplicada.'
           : params.get('saved') === '1' ? 'Repuesto guardado.' : '';
         const render = url.pathname === '/products' ? productsPage : inventoryPage;
@@ -775,7 +707,7 @@ export function createInventoryServer({
         return authenticatedPage(response, productFormPage({ ...session, ...productFormOptions(database) }));
       }
 
-      const stockMatch = url.pathname.match(/^\/products\/(\d+)\/(stock(?:\/confirm)?|history)$/);
+      const stockMatch = url.pathname.match(/^\/products\/(\d+)\/(stock(?:\/(?:confirm|apply))?|history)$/);
       if (stockMatch) {
         const product = findProduct(database, Number(stockMatch[1]));
         if (!product) return sendHtml(response, notFoundPage(session), 404);
@@ -800,6 +732,15 @@ export function createInventoryServer({
                 storedSession.stockReview = { change, confirmationToken };
                 return sendHtml(response, stockPage({ ...session, product: currentProduct, change, confirmationToken }));
               }
+              // The inline editor in Inventario saves in one step; saveStock re-checks the version.
+              if (action === 'stock/apply') {
+                const change = reviewStock(currentProduct, form);
+                saveStock(database, session.userId, change);
+                const params = new URLSearchParams({ msg: 'stocked' });
+                const query = (form.get('q') ?? '').trim();
+                if (query) params.set('q', query);
+                return redirect(response, `/inventory?${params}`);
+              }
               const review = storedSession.stockReview;
               if (!review || review.change.productId !== product.id || !matchesToken(form.get('confirmationToken') ?? '', review.confirmationToken)) {
                 return sendHtml(response, stockPage({ ...session, product: currentProduct, error: 'Revisa de nuevo el cambio antes de confirmarlo.' }), 409);
@@ -809,6 +750,9 @@ export function createInventoryServer({
               return redirect(response, `/products/${product.id}/history`);
             } catch (error) {
               if (!(error instanceof StockError)) throw error;
+              if (action === 'stock/apply') {
+                return sendHtml(response, inventoryPage({ ...session, ...catalogOptions(form, true), message: error.message }), error.status);
+              }
               return sendHtml(response, stockPage({ ...session, product: findProduct(database, product.id), values: Object.fromEntries(form), error: error.message }), error.status);
             }
           }
@@ -817,20 +761,6 @@ export function createInventoryServer({
 
       if (request.method === 'POST' && url.pathname === '/products') {
         return await saveProductFromRequest(database, response, { request, session, imageDirectory });
-      }
-
-      if (request.method === 'POST' && ['/products/archive', '/products/restore'].includes(url.pathname)) {
-        const form = await readForm(request);
-        if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
-        const archiving = url.pathname === '/products/archive';
-        try {
-          archiveSelection(database, session.userId, form.getAll('id'), archiving);
-        } catch (error) {
-          if (!(error instanceof CatalogError)) throw error;
-          if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
-          return sendHtml(response, productsPage({ ...session, ...catalogOptions(url.searchParams), message: error.message }), error.status);
-        }
-        return redirect(response, archiving ? '/products?msg=archived' : '/products?msg=restored&state=archived');
       }
 
       const archiveMatch = url.pathname.match(/^\/products\/(\d+)\/(archive|restore)$/);

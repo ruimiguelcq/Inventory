@@ -127,51 +127,34 @@ test('both exports cover every filtered page and never fall back to the full cat
     assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber, description: 'Ánodo de sacrificio', presentation: 'unidad' })).status, 303);
   }
   const page = await (await a.get('/products?q=bomba&category=1')).text();
-  assert.equal([...page.matchAll(/name="id" value="(\d+)"/g)].length, 50);
+  assert.equal([...page.matchAll(/class="product-description"/g)].length, 50);
   const allProducts = await download(await a.get(viewLink(page, 'Exportar')), 'productos.xlsx');
   assert.equal(allProducts.sheet.rowCount, 56);
   const inventoryPage = await (await a.get('/inventory?q=bomba')).text();
   const allInventory = await download(await a.get(viewLink(inventoryPage, 'Exportar')), 'inventario.xlsx');
   assert.equal(allInventory.sheet.rowCount, 56);
   assert.equal(allInventory.sheet.getCell('A56').value, 'P-055');
-  // A selection that is empty or invalid never becomes a full download.
+  // A hand-crafted export must ask for the whole search; anything else is rejected, never
+  // silently widened to the full catalog.
   for (const fields of [
     { view: 'inventory', scope: 'selected' },
     { view: 'inventory', scope: 'selected', id: '9999' },
     { view: 'inventory', scope: 'selected', id: '1.5' },
-    { view: 'inventory', scope: 'selected', id: 'oops' },
     { view: 'products', scope: 'unexpected' },
     { view: 'bogus', scope: 'all' },
     { view: 'inventory' },
   ]) {
-    const response = await a.post('/exports', { csrfToken: a.csrfToken, ...fields });
+    const response = await a.get(`/exports?${new URLSearchParams(fields)}`);
     assert.equal(response.status, 400, JSON.stringify(fields));
     assert.equal(response.headers.get('content-disposition'), null);
   }
-});
-
-test('a selected export downloads only those articles and requires a real selection', async (t) => {
-  const a = await app(t);
-  await seed(a);
-  const inventory = await (await a.get('/inventory')).text();
-  assert.match(inventory, /<form[^>]*method="post"[^>]*action="\/exports"/);
-  assert.match(inventory, /name="view" value="inventory"/);
-  assert.match(inventory, /name="scope" value="selected"/);
-  assert.match(inventory, /type="checkbox" name="id" value="1"[^>]*aria-label="Seleccionar 00123"/);
-  const selection = new URLSearchParams({ csrfToken: a.csrfToken, view: 'inventory', scope: 'selected' });
-  for (const id of ['3', '1', '1']) selection.append('id', id);
-  const { sheet } = await download(await a.post('/exports', selection), 'inventario.xlsx');
-  assert.equal(sheet.rowCount, 3);
-  assert.equal(sheet.getCell('A2').value, '00123');
-  assert.equal(sheet.getCell('A3').value, 'C-3');
-  assert.equal((await a.post('/exports', { view: 'inventory', scope: 'selected', id: '1' })).status, 403);
 });
 
 test('consulta exports both views while anonymous visitors cannot download', async (t) => {
   const a = await app(t);
   await seed(a);
   assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' })).status, 303);
-  const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
+  await a.signIn('viewer', 'equipo-seguro-123');
   const products = await (await a.get('/products')).text();
   const inventory = await (await a.get('/inventory')).text();
   assert.match(products, />Exportar<\/a>/);
@@ -179,15 +162,11 @@ test('consulta exports both views while anonymous visitors cannot download', asy
   assert.doesNotMatch(products, />Importar</);
   assert.equal((await download(await a.get(viewLink(products, 'Exportar')), 'productos.xlsx')).sheet.rowCount, 4);
   assert.equal((await download(await a.get(viewLink(inventory, 'Exportar')), 'inventario.xlsx')).sheet.rowCount, 4);
-  assert.equal((await download(await a.post('/exports', {
-    csrfToken: viewerToken, view: 'inventory', scope: 'selected', id: '2',
-  }), 'inventario.xlsx')).sheet.getCell('A2').value, 'B-2');
   a.cookie = '';
-  for (const response of [await a.get('/exports?view=inventory&scope=all'), await a.post('/exports', { view: 'inventory', scope: 'selected', id: '1' })]) {
-    assert.equal(response.status, 303);
-    assert.equal(response.headers.get('location'), '/login');
-    assert.equal(response.headers.get('content-disposition'), null);
-  }
+  const anonymous = await a.get('/exports?view=inventory&scope=all');
+  assert.equal(anonymous.status, 303);
+  assert.equal(anonymous.headers.get('location'), '/login');
+  assert.equal(anonymous.headers.get('content-disposition'), null);
 });
 
 test('an exported catalog can be reimported with categories and quantities, without duplicating anything', async (t) => {
@@ -260,30 +239,3 @@ test('an empty inventory downloads a workbook with headers and no phantom articl
   assert.equal((await a.get('/exports?view=inventory&scope=selected')).status, 400);
 });
 
-test('consulta can download a selection larger than the HTTP URL limit', async (t) => {
-  const a = await app(t);
-  for (let batch = 0; batch < 3; batch++) {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Productos');
-    sheet.addRow(['P/N', 'Descripción', 'Presentación']);
-    for (let row = 1; row <= 800; row++) {
-      sheet.addRow([`P-${String(batch * 800 + row).padStart(4, '0')}`, 'Repuesto', 'unidad']);
-    }
-    const preview = await importCatalog(a, await workbook.xlsx.writeBuffer(), { view: 'products' });
-    assert.equal(preview.status, 200, await preview.clone().text());
-    assert.equal((await a.post('/imports/confirm', {
-      csrfToken: a.csrfToken, confirmationToken: a.token(await preview.text(), 'confirmationToken'),
-    })).status, 303);
-  }
-  assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' })).status, 303);
-  const viewerToken = await a.signIn('viewer', 'equipo-seguro-123');
-  const inventory = await (await a.get('/inventory')).text();
-  assert.equal([...inventory.matchAll(/type="checkbox" name="id" value="(\d+)"/g)].length, 50);
-  const selection = new URLSearchParams({ csrfToken: viewerToken, view: 'inventory', scope: 'selected' });
-  for (let id = 1; id <= 2400; id++) selection.append('id', String(id));
-  assert.ok(Buffer.byteLength(selection.toString()) > 16_384);
-  const { sheet } = await download(await a.post('/exports', selection), 'inventario.xlsx');
-  assert.equal(sheet.rowCount, 2401);
-  assert.equal(sheet.getCell('A2').value, 'P-0001');
-  assert.equal(sheet.getCell('A2401').value, 'P-2400');
-});

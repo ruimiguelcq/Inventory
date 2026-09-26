@@ -133,7 +133,7 @@ test('restoring a backup recovers articles, stock and movement history', async (
   const inventory = await (await a.get('/inventory')).text();
   assert.match(inventory, /ANTES/);
   assert.doesNotMatch(inventory, /DESPUES/);
-  assert.match(inventory, /<td class="quantity-cell inventory-(?:ok|low)">5<\/td>/);
+  assert.match(inventory, /class="quantity-cell inventory-(?:ok|low)"[^>]*>\s*<a class="stock-value"[^>]*>5<\/a>/);
   const history = await (await a.get('/products/1/history')).text();
   assert.match(history, /Recuento inicial/);
   assert.match(history, /<td>0<\/td><td>5<\/td>/);

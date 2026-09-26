@@ -33,15 +33,15 @@ La protección de operaciones de escritura exige Gestión o Administración.
 
 Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Productos**, **Inventario** y **Órdenes de compra**, donde se preparan las listas de repuestos a pedir. Las cuentas, copias de seguridad y el cierre de sesión están en el menú superior según los permisos.
 
-**Productos** es una búsqueda instantánea por P/N o nombre con un selector **Activos/Archivados/Todos** (Activos por defecto). La tabla muestra exactamente P/N, Producto (con miniatura), Estado, Inventario, Categoría, Tipo de producto y Proveedor. El nombre abre la ficha con existencias e historial. La celda **Inventario** dice `N existencias`, en verde si N alcanza el mínimo de stock del producto y en rojo si no; un producto sin mínimo usa 10. Pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. Gestión y Administración pueden agregar productos, importar y usar las casillas para archivar, desarchivar, exportar la selección o añadirla a una lista de compra. Los enlaces antiguos a archivados redirigen a Productos.
+**Productos** es una búsqueda instantánea por P/N o nombre con un selector **Activos/Archivados/Todos** (Activos por defecto). La tabla muestra exactamente P/N, Producto (con miniatura), Estado, Inventario, Categoría, Tipo de producto y Proveedor. El nombre abre la ficha con existencias e historial. La celda **Inventario** dice `N existencias`, en verde si N alcanza el mínimo de stock del producto y en rojo si no; un producto sin mínimo usa 10. Pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. La cabecera ofrece **Importar, Exportar y Agregar producto** en ese orden (Agregar producto solo para Gestión y Administración). Los enlaces antiguos a archivados redirigen a Productos.
 
 Gestión y Administración pueden elegir una categoría, un tipo de producto o un proveedor opcionales, o crearlos al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial.
 
-**Inventario** muestra solo los activos; su búsqueda es instantánea por P/N o nombre y sus columnas son **Producto** (con miniatura), **P/N** y **Disponible**. Disponible refleja el stock actual, es de solo lectura y usa el mismo verde/rojo que Productos (el mínimo del producto, 10 por defecto). No aparecen Comprometido, Por recibir, En existencias, Ubicación ni Mínimo.
+**Inventario** muestra solo los activos; su búsqueda es instantánea por P/N o nombre y sus columnas son **Producto** (con miniatura), **P/N** y **Disponible**. Disponible muestra el stock actual con el mismo verde/rojo que Productos (el mínimo del producto, 10 por defecto). No aparecen Comprometido, Por recibir, En existencias, Ubicación ni Mínimo.
 
-Gestión y Administración pueden **Ajustar existencias** por fila, marcar artículos y usar **Añadir a lista de compra**, además de **Importar** y **Exportar**. Inventario pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. La casilla general selecciona únicamente la página visible; cambiar de página o de búsqueda limpia la selección.
+Gestión y Administración pueden **ajustar las existencias en línea**: al pulsar el número de **Disponible** se abre un editor con **Fijar en** (total exacto) o **Ajustar** (sumar/restar), un motivo opcional y guardado directo; el movimiento queda en el historial. Consulta ve Disponible en solo lectura. La cabecera ofrece **Importar** y **Exportar**. Inventario pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño.
 
-Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** del selector de estado muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
+Gestión y Administración pueden **Archivar** un repuesto desde su ficha para retirarlo de la vista activa sin borrar su historial ni existencias, y **Desarchivarlo** desde la misma ficha. La opción **Archivados** del selector de estado de Productos muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
 
 ## Imágenes de los productos
 
@@ -49,10 +49,12 @@ Cada producto puede tener una imagen (JPG, PNG o WEBP, hasta 2 MB) que se sube, 
 
 ## Existencias e historial
 
-Desde la tabla o la ficha del artículo, abre **Ajustar existencias**:
+Desde **Inventario**, pulsa el número de **Disponible** para ajustarlo en línea, o abre **Ajustar existencias** desde la ficha del artículo:
 
-- **Ajustar por:** suma o resta la cantidad indicada.
-- **Establecer en:** fija el total exacto tras un recuento.
+- **Fijar en / Establecer en:** fija el total exacto tras un recuento.
+- **Ajustar / Ajustar por:** suma o resta la cantidad indicada.
+
+El editor en línea guarda directamente, sin paso de revisión.
 
 Las cantidades son presentaciones completas (SET, KIT o unidad) y nunca pueden quedar negativas. Puedes indicar un motivo opcional. **Revisar cambio** muestra la operación y las cantidades anterior y nueva antes de **Confirmar cambio**. Si otra operación cambia las existencias mientras revisas, debes revisar de nuevo. Una confirmación no se aplica dos veces; abrir otra revisión en la misma sesión reemplaza la anterior.
 
@@ -96,7 +98,6 @@ Desde **Productos** y **Inventario**, cualquier miembro del equipo con sesión i
 
 - **Exportar productos** (Productos): el catálogo con P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría y Cantidad en `productos.xlsx`.
 - **Exportar** (Inventario): P/N, Descripción y Cantidad de los artículos activos en `inventario.xlsx`.
-- **Exportar selección a Excel:** solo los artículos marcados en las casillas de la tabla. Una selección vacía o inválida muestra un mensaje y no descarga el catálogo completo.
 
 La exportación completa respeta la búsqueda y el estado de la vista y recorre **todas las páginas**, no solo la visible. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.
 
@@ -118,8 +119,6 @@ Guardar o editar una lista **no cambia las existencias ni genera movimientos**. 
 Cualquier miembro del equipo con sesión iniciada (**Consulta**, **Gestión** o **Administración**) puede **Exportar a Excel** una lista completa. El archivo `compra-<número>.xlsx` contiene exactamente las columnas **P/N**, **Nombre** y **Cantidad solicitada**, con el P/N como texto y sin precios, impuestos, proveedor, número ni fecha dentro del documento. Para exportar, la lista necesita al menos un artículo y todas las cantidades solicitadas deben ser enteras y mayores que cero; si falta alguna, se indica el error y no se descarga ningún archivo parcial. Exportar no archiva la lista, no cambia las existencias ni el historial y puede repetirse.
 
 Gestión y Administración pueden **Archivar** una lista para conservarla sin ediciones y **Reabrir** una archivada para recuperar el borrador. Archivar o reabrir no altera existencias ni historial. Las listas archivadas siguen consultándose y exportándose. Los artículos archivados que ya formaban parte de la lista siguen visibles como archivados y se incluyen al exportar; pueden retirarse mientras la lista sea un borrador.
-
-Desde **Inventario**, Gestión y Administración pueden marcar artículos y usar **Añadir a lista de compra** para incorporar la selección a una lista nueva o a un borrador existente. La selección se revisa antes de confirmar: solo se añaden artículos activos y las listas archivadas no se ofrecen como destino hasta reabrirlas. Cada artículo aparece una sola vez; si ya estaba en la lista, conserva su línea y su cantidad, y las líneas nuevas empiezan sin cantidad. La operación no cambia existencias ni historial.
 
 Las listas y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 

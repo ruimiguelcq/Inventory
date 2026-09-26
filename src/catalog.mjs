@@ -1,4 +1,4 @@
-import { findOrCreateNamed, findUser, insertProduct, setProductClassification, setProductImage, updateProduct, setProductArchived } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, setProductClassification, setProductImage, updateProduct } from './database.mjs';
 import { removeProductImage, storeProductImage } from './images.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock } from './stock.mjs';
@@ -93,20 +93,3 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
   }
 }
 
-export function archiveSelection(database, userId, values, archived) {
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    requireManager(database, userId);
-    if (!values.length || values.length > 100 || values.some((value) => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
-      throw new CatalogError('Selecciona entre 1 y 100 artículos válidos de la página visible.');
-    }
-    const ids = [...new Set(values.map(Number))];
-    const exists = database.prepare('SELECT 1 FROM products WHERE id = ?');
-    if (ids.some((id) => !exists.get(id))) throw new CatalogError('Algún artículo de la selección ya no existe. Vuelve a seleccionarlos.');
-    for (const id of ids) setProductArchived(database, id, archived);
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-}
