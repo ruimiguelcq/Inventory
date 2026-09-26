@@ -116,7 +116,11 @@ Gestión y Administración pueden crear una **Nueva lista de compra**. En la fic
 - La **cantidad solicitada** empieza vacía y se escribe manualmente; no se calcula desde el mínimo de stock. Puedes guardar un borrador incompleto. Si escribes una cantidad, debe ser un número entero mayor que cero.
 - **Retirar** quita una línea. Los artículos archivados después siguen visibles e identificados en las listas existentes y pueden retirarse, pero no se ofrecen para nuevas incorporaciones.
 
-Guardar o editar una lista **no cambia las existencias ni genera movimientos**. Consulta puede ver las listas; Gestión y Administración las crean y editan, con autorización y validación en el servidor. La exportación a Excel y el archivado/reapertura manual llegan en el siguiente corte.
+Guardar o editar una lista **no cambia las existencias ni genera movimientos**. Consulta puede ver las listas; Gestión y Administración las crean y editan, con autorización y validación en el servidor.
+
+Cualquier miembro del equipo con sesión iniciada (**Consulta**, **Gestión** o **Administración**) puede **Exportar a Excel** una lista completa. El archivo `compra-<número>.xlsx` contiene exactamente las columnas **P/N**, **Nombre** y **Cantidad solicitada**, con el P/N como texto y sin precios, impuestos, proveedor, número ni fecha dentro del documento. Para exportar, la lista necesita al menos un artículo y todas las cantidades solicitadas deben ser enteras y mayores que cero; si falta alguna, se indica el error y no se descarga ningún archivo parcial. Exportar no archiva la lista, no cambia las existencias ni el historial y puede repetirse.
+
+Gestión y Administración pueden **Archivar** una lista para conservarla sin ediciones y **Reabrir** una archivada para recuperar el borrador. Archivar o reabrir no altera existencias ni historial. Las listas archivadas siguen consultándose y exportándose. Los artículos archivados que ya formaban parte de la lista siguen visibles como archivados y se incluyen al exportar; pueden retirarse mientras la lista sea un borrador.
 
 Las listas y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 

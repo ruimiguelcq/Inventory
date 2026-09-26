@@ -286,13 +286,16 @@ export function purchaseOrdersPage({ orders = [], error = '', ...session }) {
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       <button class="button button-primary" type="submit">Nueva lista de compra</button>
     </form>`;
-  const rows = orders.map((order) => `<tr>
+  const rows = orders.map((order) => {
+    const exportable = order.line_count > 0 && order.ready_count === order.line_count;
+    return `<tr>
     <td class="part-number"><a href="/purchase-orders/${order.id}">Compra #${order.id}</a></td>
     <td><time datetime="${escapeHtml(timestampAttribute(order.created_at))}">${escapeHtml(formatTimestamp(order.created_at))}</time></td>
     <td><span class="status-tag">${order.status === 'archived' ? 'Archivada' : 'Borrador'}</span></td>
     <td class="quantity-cell" title="${order.ready_count} con cantidad de ${order.line_count} artículos">${order.ready_count}/${order.line_count}</td>
-    <td><a href="/purchase-orders/${order.id}">${canManage ? 'Editar' : 'Ver'}</a></td>
-  </tr>`).join('');
+    <td><a href="/purchase-orders/${order.id}">${canManage && order.status === 'draft' ? 'Editar' : 'Ver'}</a>${exportable ? ` · <a href="/purchase-orders/${order.id}/export">Exportar</a>` : ''}</td>
+  </tr>`;
+  }).join('');
 
   const content = `
     <div class="page-heading">
@@ -316,6 +319,8 @@ export function purchaseOrdersPage({ orders = [], error = '', ...session }) {
 
 export function purchaseOrderPage({ order, lines = [], products = [], values = {}, error = '', ...session }) {
   const canManage = canManageInventory(session.role);
+  // Archived lists stay readable and exportable, but only drafts can be edited until reopened.
+  const editable = canManage && order.status === 'draft';
   const inList = new Set(lines.map((line) => line.id));
   const available = products.filter((product) => !inList.has(product.id));
   const options = available.map((product) => {
@@ -333,7 +338,7 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
       <td><a class="product-description" href="/products/${line.id}">${escapeHtml(line.description)}</a>
         ${line.archived ? '<span class="status-tag">Archivado</span>' : ''}</td>
       <td class="quantity-cell">${line.quantity}${badge}</td>
-      ${canManage ? `<td><input class="line-quantity" type="number" min="1" step="1" inputmode="numeric"
+      ${editable ? `<td><input class="line-quantity" type="number" min="1" step="1" inputmode="numeric"
           name="line-${line.line_id}" value="${escapeHtml(quantity)}" aria-label="Cantidad solicitada de ${escapeHtml(line.part_number)}"></td>
         <td class="row-action"><button class="text-link" type="submit" formaction="/purchase-orders/${order.id}/lines/${line.line_id}/remove">Retirar</button></td>`
         : `<td class="quantity-cell">${quantity === '' ? '<span class="muted">—</span>' : quantity}</td>`}
@@ -342,11 +347,11 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
 
   const table = lines.length ? `<div class="table-scroll"><table><thead><tr>
       <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Existencias</th>
-      <th scope="col" class="align-right">Cantidad solicitada</th>${canManage ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
+      <th scope="col" class="align-right">Cantidad solicitada</th>${editable ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table></div>`
     : `<div class="empty-state"><p>Todavía no hay artículos en esta lista.</p></div>`;
 
-  const addSection = canManage ? `<section class="form-section">
+  const addSection = editable ? `<section class="form-section">
       <h2>Añadir artículo</h2>
       <p class="form-hint">Se ofrecen solo artículos activos; los agotados y con stock bajo aparecen primero.</p>
       ${available.length ? `<div class="form-grid"><div class="field field-wide">
@@ -360,11 +365,11 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
         : '<p class="form-hint">Todos los artículos activos ya están en esta lista.</p>'}
     </section>` : '';
 
-  const detail = canManage ? `<form class="product-form" method="post" action="/purchase-orders/${order.id}">
+  const detail = editable ? `<form class="product-form" method="post" action="/purchase-orders/${order.id}">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
       <section class="form-section"><h2>Artículos de la lista</h2>
-        <p class="form-hint">Deja una cantidad vacía para guardar el borrador incompleto. Las cantidades escritas deben ser enteros mayores que cero.</p>
+        <p class="form-hint">Deja una cantidad vacía para guardar el borrador incompleto. Las cantidades escritas deben ser enteros mayores que cero. La lista se exporta cuando todas las cantidades estén completas.</p>
         ${table}
       </section>
       ${addSection}
@@ -373,14 +378,24 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
     </form>`
     : `<section class="inventory-panel" aria-label="Artículos de la lista">
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      ${canManage ? '<p class="form-hint">La lista está archivada. Reábrela para editar cantidades o retirar artículos.</p>' : ''}
       ${table}
     </section>`;
+
+  const actions = `<div class="form-actions">
+      <a class="button button-secondary" href="/purchase-orders/${order.id}/export">Exportar a Excel</a>
+      ${canManage ? `<form method="post" action="/purchase-orders/${order.id}/${order.status === 'archived' ? 'reopen' : 'archive'}">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <button class="button button-secondary" type="submit">${order.status === 'archived' ? 'Reabrir' : 'Archivar'}</button>
+      </form>` : ''}
+    </div>`;
 
   const content = `
     <div class="breadcrumb"><a href="/purchase-orders">Órdenes de compra</a><span aria-hidden="true">/</span><span>Compra #${order.id}</span></div>
     <div class="page-heading"><div><p class="eyebrow">${order.status === 'archived' ? 'Archivada' : 'Borrador'}</p>
       <h1>Compra #${order.id}</h1>
-      <p class="page-subtitle">Creada el ${escapeHtml(formatTimestamp(order.created_at))} · ${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</p></div></div>
+      <p class="page-subtitle">Creada el ${escapeHtml(formatTimestamp(order.created_at))} · ${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</p></div>
+      ${actions}</div>
     ${detail}`;
   return page(`Compra #${order.id}`, content, { ...session, active: 'purchases' });
 }

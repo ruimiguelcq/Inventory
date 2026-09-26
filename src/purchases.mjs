@@ -8,6 +8,7 @@ import {
   listPurchaseOrderLines,
   removePurchaseOrderLine,
   setPurchaseOrderLineQuantity,
+  setPurchaseOrderStatus,
   touchPurchaseOrder,
 } from './database.mjs';
 import { canManageInventory } from './permissions.mjs';
@@ -30,13 +31,17 @@ function positiveId(value) {
   return typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value));
 }
 
-// Every mutation opens one transaction, revalidates the role and loads the draft it acts on.
-function withDraft(database, userId, purchaseOrderId, run) {
+// Every mutation opens one transaction, revalidates the role and loads the list it acts on.
+// Editing is only offered while the list is a draft; archived lists are read-only until reopened.
+function withDraft(database, userId, purchaseOrderId, run, { allowArchived = false } = {}) {
   database.exec('BEGIN IMMEDIATE');
   try {
     requireManager(database, userId);
     const order = findPurchaseOrder(database, purchaseOrderId);
     if (!order) throw new PurchaseError('No encontramos esa lista de compra.', 404);
+    if (!allowArchived && order.status !== 'draft') {
+      throw new PurchaseError('Reabre la lista para poder editarla.', 409);
+    }
     const result = run(order);
     touchPurchaseOrder(database, order.id);
     database.exec('COMMIT');
@@ -115,4 +120,17 @@ export function removePurchaseLine(database, userId, purchaseOrderId, lineId) {
       throw new PurchaseError('La línea ya no forma parte de la lista.', 404);
     }
   });
+}
+
+// Archiving and reopening only change the list status; they never touch stock or history.
+export function archivePurchaseOrder(database, userId, purchaseOrderId) {
+  return withDraft(database, userId, purchaseOrderId, (order) => {
+    setPurchaseOrderStatus(database, order.id, 'archived');
+  }, { allowArchived: true });
+}
+
+export function reopenPurchaseOrder(database, userId, purchaseOrderId) {
+  return withDraft(database, userId, purchaseOrderId, (order) => {
+    setPurchaseOrderStatus(database, order.id, 'draft');
+  }, { allowArchived: true });
 }
