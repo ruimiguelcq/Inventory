@@ -612,6 +612,10 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
               <input id="location" name="location" value="${escapeHtml(product.location ?? '')}" maxlength="120" placeholder="Estante, caja u otra referencia interna">
             </div>
           </section>
+          <div class="form-actions">
+            <a class="button button-secondary" href="/products">Cancelar</a>
+            <button class="button button-primary" type="submit">Guardar repuesto</button>
+          </div>
         </div>
         <aside class="product-layout__side">
           <section class="form-section form-card">
@@ -625,10 +629,6 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
             </div>
           </section>
         </aside>
-      </div>
-      <div class="form-actions">
-        <a class="button button-quiet" href="/products">Cancelar</a>
-        <button class="button button-primary" type="submit">Guardar repuesto</button>
       </div>
     </form>`;
   return page(title, content, { ...session, active: 'products' });

@@ -77,6 +77,9 @@ test('the product form ships the two-column layout, Multimedia, Costo and the in
   assert.match(form, /inventory-card/);
   assert.match(form, /name="initialQuantity"/);
   assert.match(form, /name="location"/);
+  // Actions sit under Inventario in the main column: a white Cancelar and the dark Guardar.
+  assert.ok(form.indexOf('name="location"') < form.indexOf('>Cancelar<'), 'acciones bajo Inventario');
+  assert.match(form, /<a class="button button-secondary" href="\/products">Cancelar<\/a>/);
   // Estado is no longer on the form.
   assert.doesNotMatch(form, /name="state"/);
   // Named lists render as a native select (no-JS fallback) plus a searchable combobox.
