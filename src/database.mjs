@@ -210,6 +210,12 @@ export function findProduct(database, id) {
   return database.prepare(`${PRODUCT_SELECT} WHERE products.id = ?`).get(id);
 }
 
+// The import preview resolves the previous article by P/N with the same joins as the detail
+// view, so it can show the category, type and supplier that an absent column will preserve.
+export function findProductByPartNumber(database, partNumber) {
+  return database.prepare(`${PRODUCT_SELECT} WHERE products.part_number = ? COLLATE NOCASE`).get(partNumber);
+}
+
 export function listProducts(database) {
   return database.prepare(`${PRODUCT_SELECT} ORDER BY part_number COLLATE NOCASE, products.id`).all();
 }

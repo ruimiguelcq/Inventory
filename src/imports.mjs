@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { findOrCreateNamed, findUser, insertProduct, setProductClassification, updateProduct } from './database.mjs';
+import { findOrCreateNamed, findProductByPartNumber, findUser, insertProduct, setProductClassification, updateProduct } from './database.mjs';
 import { validateProduct } from './products.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock, reviewStock, StockError } from './stock.mjs';
@@ -114,7 +114,6 @@ export async function previewImport(database, form, view) {
       : 'Faltan columnas obligatorias para Inventario: P/N y Cantidad.');
   }
   const rows = [];
-  const find = database.prepare('SELECT * FROM products WHERE part_number = ? COLLATE NOCASE');
   for (let number = 2; number <= sheet.rowCount; number++) {
     const excelRow = sheet.getRow(number);
     if (!excelRow.hasValues) continue;
@@ -124,9 +123,11 @@ export async function previewImport(database, form, view) {
       row.partNumber = cellText(excelRow.getCell(mapping.get('partNumber')));
       if (typeof excelRow.getCell(mapping.get('partNumber')).value === 'number') throw new ImportError('Guarda el P/N como texto en Excel para conservar su formato y ceros iniciales.');
       if (!row.partNumber || row.partNumber.length > 100) throw new ImportError('Escribe un P/N de hasta 100 caracteres.');
-      row.previous = find.get(row.partNumber) ?? null;
+      row.previous = findProductByPartNumber(database, row.partNumber) ?? null;
       if (!descriptions && !row.previous) throw new ImportError('P/N no encontrado: la importación de Inventario solo actualiza artículos existentes.');
       row.product = row.previous ? descriptiveProduct(row.previous) : {};
+      // The Estado column is informational, but reading it keeps the "values, no formulas" rule.
+      if (mapping.has('state')) cellText(excelRow.getCell(mapping.get('state')));
       if (descriptions) {
         const values = new URLSearchParams();
         for (const field of CLASSIC_FIELDS) {
@@ -138,6 +139,9 @@ export async function previewImport(database, form, view) {
         const validated = validateProduct(values);
         if (validated.error) throw new ImportError(validated.error);
         row.product = validated.product;
+        // Show what will actually be kept: an absent long-description/price column preserves it.
+        if (!row.product.longDescriptionProvided) row.product.longDescription = row.previous?.long_description ?? '';
+        if (!row.product.priceProvided) row.product.priceCents = row.previous?.price_cents ?? null;
         for (const [field, { tooLong }] of Object.entries(NAMED_LISTS)) {
           if (!mapping.has(field)) continue;
           const name = cellText(excelRow.getCell(mapping.get(field)));
@@ -193,9 +197,8 @@ export function applyImport(database, userId, review) {
   try {
     if (!canManageInventory(findUser(database, userId)?.role)) throw new ImportError('No tienes permiso para realizar esta operación.', 403);
     if (review.rows.some((row) => row.errors.length)) throw new ImportError('Corrige todas las filas con errores antes de confirmar.');
-    const find = database.prepare('SELECT * FROM products WHERE part_number = ? COLLATE NOCASE');
     for (const row of review.rows) {
-      const current = find.get(row.partNumber) ?? null;
+      const current = findProductByPartNumber(database, row.partNumber) ?? null;
       if (JSON.stringify(current) !== JSON.stringify(row.previous)) throw new ImportError('Los artículos o las existencias han cambiado. Revisa de nuevo el archivo.', 409);
     }
     for (const row of review.rows) {

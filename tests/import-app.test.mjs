@@ -157,15 +157,28 @@ test('the expanded optional columns follow the absent-preserves, empty-clears ru
   assert.match(filled, /Tipo de producto<\/dt><dd>Repuesto/);
   assert.match(filled, /Proveedor<\/dt><dd>Marino/);
   assert.match(filled, /\$9\.99/);
-  // Absent columns preserve every value.
-  assert.equal((await a.confirm(await a.upload([['P/N', 'Producto', 'Presentación'], ['EXT', 'Renombrado', 'KIT']]))).status, 303);
+  // Absent columns preserve every value, and the preview shows what will be kept.
+  const preservedPreview = await a.upload([['P/N', 'Producto', 'Presentación'], ['EXT', 'Renombrado', 'KIT']]);
+  const preservedHtml = await preservedPreview.text();
+  assert.match(preservedHtml, /Categoría: Motor/);
+  assert.match(preservedHtml, /Tipo: Repuesto/);
+  assert.match(preservedHtml, /Proveedor: Marino/);
+  assert.match(preservedHtml, /\$9\.99/);
+  assert.match(preservedHtml, /Larga/);
+  assert.equal((await a.post('/imports/confirm', { csrfToken: a.csrfToken, confirmationToken: a.token(preservedHtml, 'confirmationToken') })).status, 303);
   const preserved = await (await a.get('/products/1')).text();
   assert.match(preserved, /Larga/);
   assert.match(preserved, /Tipo de producto<\/dt><dd>Repuesto/);
   assert.match(preserved, /Proveedor<\/dt><dd>Marino/);
   assert.match(preserved, /\$9\.99/);
-  // Empty cells clear every optional value.
-  assert.equal((await a.confirm(await a.upload([headers, ['EXT', 'Sin datos', 'KIT', '', '', '', '', '']]))).status, 303);
+  // Empty cells clear every optional value, and the preview says so.
+  const clearedPreview = await a.upload([headers, ['EXT', 'Sin datos', 'KIT', '', '', '', '', '']]);
+  const clearedHtml = await clearedPreview.text();
+  assert.match(clearedHtml, /Precio: —/);
+  assert.match(clearedHtml, /Tipo: —/);
+  assert.match(clearedHtml, /Proveedor: —/);
+  assert.match(clearedHtml, /Categoría: Sin categoría/);
+  assert.equal((await a.post('/imports/confirm', { csrfToken: a.csrfToken, confirmationToken: a.token(clearedHtml, 'confirmationToken') })).status, 303);
   const cleared = await (await a.get('/products/1')).text();
   assert.match(cleared, /<h1>Sin datos<\/h1>/);
   assert.match(cleared, /Descripción<\/dt><dd class="long-description">—/);
