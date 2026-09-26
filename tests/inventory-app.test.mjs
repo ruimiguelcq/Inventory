@@ -91,7 +91,7 @@ test('the administrator can set up access and create a repuesto visible in the i
   assert.match(savedHtml, /6L-12345/);
   assert.match(savedHtml, /Conchas de biela/);
   // Inventory shows only Producto, P/N and a read-only Disponible; location and minimum are gone.
-  assert.match(savedHtml, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+  assert.match(savedHtml, /<th scope="col" class="align-left">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>\s*<th scope="col">Historial<\/th>/);
   assert.doesNotMatch(savedHtml, /data-column|Ubicación|Mínimo de stock|Estante B/);
   const catalogHtml = await (await fetch(`${baseUrl}/products`, { headers: { cookie: administratorCookie } })).text();
   assert.match(catalogHtml, /6L-12345/);

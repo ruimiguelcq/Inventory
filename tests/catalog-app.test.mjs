@@ -179,7 +179,7 @@ test('Inventario shows only Producto, P/N and Disponible with an instant search'
   await seed(a);
 
   const page = await (await a.get('/inventory')).text();
-  assert.match(page, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+  assert.match(page, /<th scope="col" class="align-left">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>\s*<th scope="col">Historial<\/th>/);
   assert.doesNotMatch(page, /<th[^>]*>Acciones<\/th>|<th[^>]*>Existencias<\/th>|<th[^>]*>Ubicación<\/th>|<th[^>]*>Mínimo de stock<\/th>/);
   assert.doesNotMatch(page, /name="presentation"|name="category"|name="brand"|name="outOfStock"|name="lowStock"|name="pageSize"|data-column|data-column-toggle/);
   assert.doesNotMatch(page, /class="filter-bar"/);
@@ -275,7 +275,7 @@ test('desktop sections, product details and management links respect every role 
     assert.equal(products.includes('>Importar</a>'), role !== 'viewer');
     const inventory = await (await a.get('/inventory')).text();
     assert.doesNotMatch(inventory, /name="archived"|name="state"|name="presentation"|name="pageSize"/);
-    assert.match(inventory, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+    assert.match(inventory, /<th scope="col" class="align-left">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>\s*<th scope="col">Historial<\/th>/);
     assert.match(inventory, /class="catalog-toolbar"[^>]*data-instant-search/);
     const detail = await a.get('/products/1');
     assert.equal(detail.status, 200);
@@ -309,7 +309,7 @@ test('Productos shows the agreed columns and header without the retired filters'
   })).status, 303);
 
   const page = await (await a.get('/products')).text();
-  assert.match(page, /<th scope="col">P\/N<\/th>\s*<th scope="col">Producto<\/th>\s*<th scope="col">Estado<\/th>\s*<th scope="col" class="align-right">Inventario<\/th>\s*<th scope="col">Categoría<\/th>\s*<th scope="col">Tipo de producto<\/th>\s*<th scope="col">Proveedor<\/th>/);
+  assert.match(page, /<th scope="col" class="align-left">Producto<\/th>\s*<th scope="col" class="align-left">P\/N<\/th>\s*<th scope="col">Estado<\/th>\s*<th scope="col" class="align-right">Inventario<\/th>\s*<th scope="col">Categoría<\/th>\s*<th scope="col">Tipo de producto<\/th>\s*<th scope="col">Proveedor<\/th>/);
   assert.doesNotMatch(page, /<th[^>]*>Acciones<\/th>/);
   assert.match(page, /Motores/);
   assert.match(page, /Motor eléctrico/);

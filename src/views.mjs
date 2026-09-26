@@ -161,14 +161,15 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
   const rows = products.map((product) => {
     if (inventory) {
       return `<tr>
-      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a> · <a href="/products/${product.id}/history">Historial</a></span></td>
+      <td class="align-left"><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
       ${stockCell(product)}
+      <td><a href="/products/${product.id}/history">Historial</a></td>
     </tr>`;
     }
     return `<tr>
-      <td class="part-number">${escapeHtml(product.part_number)}</td>
-      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
+      <td class="align-left"><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
+      <td class="part-number align-left">${escapeHtml(product.part_number)}</td>
       <td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>
       <td class="quantity-cell inventory-${inventoryLevel(product)}">${product.quantity} existencias</td>
       <td class="muted">${escapeHtml(product.category_name ?? 'Sin categoría')}</td>
@@ -179,13 +180,14 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
 
   const header = inventory
     ? `<thead><tr>
-      <th scope="col">Producto</th>
+      <th scope="col" class="align-left">Producto</th>
       <th scope="col">P/N</th>
       <th scope="col" class="align-right">Disponible</th>
+      <th scope="col">Historial</th>
     </tr></thead>`
     : `<thead><tr>
-      <th scope="col">P/N</th>
-      <th scope="col">Producto</th>
+      <th scope="col" class="align-left">Producto</th>
+      <th scope="col" class="align-left">P/N</th>
       <th scope="col">Estado</th>
       <th scope="col" class="align-right">Inventario</th>
       <th scope="col">Categoría</th>

@@ -254,6 +254,7 @@ tbody tr:hover { background: #f7fbfa; }
 }
 .muted { color: var(--muted); }
 .quantity-cell, .align-right { text-align: center; font-variant-numeric: tabular-nums; }
+.align-left { text-align: left; }
 .inventory-ok { color: #1f6257; font-weight: 600; }
 .inventory-low { color: var(--error); font-weight: 600; }
 .stock-value {
