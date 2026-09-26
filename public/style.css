@@ -73,22 +73,6 @@ button, input, select, textarea { font: inherit; }
   font-weight: 700;
 }
 
-.topbar nav { display: flex; align-self: stretch; }
-
-.nav-link {
-  display: flex;
-  align-items: center;
-  padding: 0 15px;
-  color: #c4d2d9;
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-}
-
-.nav-link:hover, .nav-link.is-active {
-  color: white;
-  border-bottom-color: #76b7ad;
-}
-
 .account-area {
   display: flex;
   align-items: center;
@@ -110,6 +94,7 @@ button, input, select, textarea { font: inherit; }
 }
 .sidebar-link { display: block; padding: 10px 12px; border-radius: 7px; text-decoration: none; font-weight: 600; }
 .sidebar-child { padding-left: 32px; font-weight: 400; }
+.sidebar-rule { height: 1px; margin: 10px 12px; border: 0; background: #d6d6d6; }
 .sidebar-link:hover { background: #e2e2e2; }
 .sidebar-link.is-active { background: #dcdcdc; font-weight: 650; }
 .authenticated .page-shell { width: auto; margin-left: 216px; padding: 28px 28px 64px; }
@@ -665,8 +650,6 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
 @media (max-width: 760px) {
   .sidebar { width: 170px; padding-inline: 8px; }
   .authenticated .page-shell { margin-left: 170px; padding: 24px 16px; }
-  .topbar nav { flex-wrap: wrap; }
-  .page-heading { flex-wrap: wrap; }
   .topbar { gap: 17px; padding: 0 16px; }
   .account-area { gap: 5px; }
   .account-name { display: none; }
@@ -682,7 +665,6 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
   .sidebar { position: static; width: auto; padding: 8px; }
   .authenticated .page-shell { margin-left: 0; }
   .topbar { flex-wrap: wrap; gap: 0 14px; padding-top: 8px; }
-  .topbar nav { height: 42px; order: 3; width: 100%; }
   .account-area { margin-left: auto; }
   .page-heading { flex-direction: column; align-items: stretch; }
   .page-heading > .button { align-self: flex-start; }

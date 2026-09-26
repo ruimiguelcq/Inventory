@@ -261,8 +261,9 @@ test('desktop sections, product details and management links respect every role 
       const html = await response.text();
       assert.match(html, new RegExp(`href="${path}" aria-current="page">${title}`));
       const sidebar = html.match(/<aside[\s\S]*?<\/aside>/)[0];
-      assert.equal([...sidebar.matchAll(/<a /g)].length, 3);
-      assert.doesNotMatch(sidebar, /Cuentas|Copias/);
+      assert.equal([...sidebar.matchAll(/<a /g)].length, role === 'admin' ? 5 : 3);
+      assert.equal(sidebar.includes('>Cuentas y permisos</a>'), role === 'admin');
+      assert.equal(sidebar.includes('>Copias de seguridad</a>'), role === 'admin');
       assert.match(html, /Cerrar sesión/);
       assert.equal(html.includes('href="/users"'), role === 'admin');
       assert.equal(html.includes('href="/backups"'), role === 'admin');

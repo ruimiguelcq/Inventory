@@ -38,10 +38,6 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
         <span class="brand-mark" aria-hidden="true">T</span>
         <span>Taller Marino</span>
       </a>
-      <nav aria-label="Administración">
-        ${role === 'admin' ? `<a class="nav-link ${active === 'users' ? 'is-active' : ''}" href="/users">Cuentas y permisos</a>` : ''}
-        ${role === 'admin' ? `<a class="nav-link ${active === 'backups' ? 'is-active' : ''}" href="/backups">Copias de seguridad</a>` : ''}
-      </nav>
       <div class="account-area">
         <span class="account-name">${escapeHtml(username)}</span>
         <form method="post" action="/logout">
@@ -52,6 +48,9 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
     </header>
     <aside class="sidebar"><nav aria-label="Navegación principal">
       ${[['products', '/products', 'Productos'], ['inventory', '/inventory', 'Inventario'], ['purchases', '/purchase-orders', 'Órdenes de compra']].map(([key, href, label]) => `<a class="sidebar-link ${key !== 'products' ? 'sidebar-child' : ''} ${active === key ? 'is-active' : ''}" href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}
+      ${role === 'admin' ? `<hr class="sidebar-rule">
+      <a class="sidebar-link ${active === 'users' ? 'is-active' : ''}" href="/users" ${active === 'users' ? 'aria-current="page"' : ''}>Cuentas y permisos</a>
+      <a class="sidebar-link ${active === 'backups' ? 'is-active' : ''}" href="/backups" ${active === 'backups' ? 'aria-current="page"' : ''}>Copias de seguridad</a>` : ''}
     </nav></aside>` : '';
 
   return `<!doctype html>
