@@ -6,15 +6,23 @@ import { recordStock, reviewStock, StockError } from './stock.mjs';
 
 const MAX_UPLOAD = 2 * 1024 * 1024;
 const MAX_ROWS = 1000;
+const VIEWS = ['products', 'inventory'];
 const columns = new Map([
   ['p/n', 'partNumber'], ['descripcion', 'description'], ['presentacion', 'presentation'],
   ['marca', 'brand'], ['ubicacion', 'location'], ['ubicacion principal', 'location'],
   ['minimo de stock', 'minimumStock'], ['minimo', 'minimumStock'],
+  ['categoria', 'category'],
   ['cantidad', 'quantity'], ['disponible', 'quantity'],
 ]);
 
 export class ImportError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
+}
+
+export function parseImportView(params) {
+  const view = params.get('view') ?? 'inventory';
+  if (!VIEWS.includes(view)) throw new ImportError('Elige una vista válida para importar.');
+  return view;
 }
 
 export async function readImportForm(request) {
@@ -69,27 +77,33 @@ async function readSpreadsheet(file) {
   return { sheet, mapping };
 }
 
-export async function previewImport(database, form) {
-  const descriptions = form.get('descriptions') === 'on';
-  const stock = form.get('stock') === 'on';
+// Productos importa catálogo/categoría y, opcionalmente, existencias en el mismo lote.
+// Inventario solo actualiza cantidades de artículos que ya existen.
+export async function previewImport(database, form, view) {
+  if (!VIEWS.includes(view)) throw new ImportError('Elige una vista válida para importar.');
+  const descriptions = view === 'products';
+  const stock = descriptions ? form.get('stock') === 'on' : true;
   const operation = form.get('operation');
-  if (!descriptions && !stock) throw new ImportError('Elige datos descriptivos y/o existencias.');
   if (stock && !['adjust', 'set'].includes(operation)) throw new ImportError('Elige explícitamente Ajustar por o Establecer en.');
   const { sheet, mapping } = await readSpreadsheet(form.get('file'));
   const required = ['partNumber', ...(descriptions ? ['description', 'presentation'] : []), ...(stock ? ['quantity'] : [])];
-  if (required.some((field) => !mapping.has(field))) throw new ImportError('Faltan columnas obligatorias: P/N, Descripción y Presentación para datos descriptivos; Cantidad para existencias.');
+  if (required.some((field) => !mapping.has(field))) {
+    throw new ImportError(descriptions
+      ? 'Faltan columnas obligatorias: P/N, Descripción y Presentación, y Cantidad si importas existencias.'
+      : 'Faltan columnas obligatorias para Inventario: P/N y Cantidad.');
+  }
   const rows = [];
   const find = database.prepare('SELECT * FROM products WHERE part_number = ? COLLATE NOCASE');
   for (let number = 2; number <= sheet.rowCount; number++) {
     const excelRow = sheet.getRow(number);
     if (!excelRow.hasValues) continue;
-    const row = { number, errors: [], partNumber: '', previous: null, product: null, change: null };
+    const row = { number, errors: [], partNumber: '', previous: null, product: null, category: undefined, categoryName: null, change: null };
     try {
       row.partNumber = cellText(excelRow.getCell(mapping.get('partNumber')));
       if (typeof excelRow.getCell(mapping.get('partNumber')).value === 'number') throw new ImportError('Guarda el P/N como texto en Excel para conservar su formato y ceros iniciales.');
       if (!row.partNumber || row.partNumber.length > 100) throw new ImportError('Escribe un P/N de hasta 100 caracteres.');
       row.previous = find.get(row.partNumber) ?? null;
-      if (!descriptions && !row.previous) throw new ImportError('P/N no encontrado: activa datos descriptivos para crear el artículo.');
+      if (!descriptions && !row.previous) throw new ImportError('P/N no encontrado: la importación de Inventario solo actualiza artículos existentes.');
       row.product = row.previous ? descriptiveProduct(row.previous) : {};
       if (descriptions) {
         const values = new URLSearchParams();
@@ -99,10 +113,19 @@ export async function previewImport(database, form) {
         const validated = validateProduct(values);
         if (validated.error) throw new ImportError(validated.error);
         row.product = validated.product;
+        if (mapping.has('category')) {
+          const name = cellText(excelRow.getCell(mapping.get('category')));
+          if (name.length > 100) throw new ImportError('La categoría no puede superar los 100 caracteres.');
+          // An empty cell clears the category; an absent column preserves the current one.
+          row.category = name || null;
+        }
       }
+      row.categoryName = row.category === undefined ? row.previous?.category_name ?? null : row.category;
       if (stock) {
-        row.change = reviewStock({ ...row.previous, quantity: row.previous?.quantity ?? 0, presentation: row.product.presentation },
-          new URLSearchParams({ operation, quantity: cellText(excelRow.getCell(mapping.get('quantity'))), reason: 'Importación Excel' }));
+        const base = descriptions
+          ? { ...(row.previous ?? {}), quantity: row.previous?.quantity ?? 0, presentation: row.product.presentation }
+          : row.previous;
+        row.change = reviewStock(base, new URLSearchParams({ operation, quantity: cellText(excelRow.getCell(mapping.get('quantity'))), reason: 'Importación Excel' }));
       }
     } catch (error) {
       if (!(error instanceof ImportError || error instanceof StockError)) throw error;
@@ -116,7 +139,18 @@ export async function previewImport(database, form) {
   const counts = new Map();
   for (const row of rows) counts.set(key(row.partNumber), (counts.get(key(row.partNumber)) ?? 0) + 1);
   for (const row of rows) if (row.partNumber && counts.get(key(row.partNumber)) > 1) row.errors.push('P/N duplicado dentro del archivo.');
-  return { rows, descriptions, stock, operation };
+  return { rows, descriptions, stock, operation, view };
+}
+
+// Categories are reused case-insensitively so equivalent names never duplicate.
+function assignCategory(database, productId, category) {
+  if (category === undefined) return;
+  let categoryId = null;
+  if (category) {
+    database.prepare('INSERT INTO categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING').run(category);
+    categoryId = database.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(category).id;
+  }
+  database.prepare('UPDATE products SET category_id = ? WHERE id = ?').run(categoryId, productId);
 }
 
 export function applyImport(database, userId, review) {
@@ -131,8 +165,11 @@ export function applyImport(database, userId, review) {
     }
     for (const row of review.rows) {
       let id = row.previous?.id;
-      if (!id) id = Number(insertProduct(database, row.product).lastInsertRowid);
-      else if (review.descriptions) updateProduct(database, id, row.product);
+      if (review.descriptions) {
+        if (!id) id = Number(insertProduct(database, row.product).lastInsertRowid);
+        else updateProduct(database, id, row.product);
+        assignCategory(database, id, row.category);
+      }
       if (row.change) recordStock(database, userId, { ...row.change, productId: id }, 'import');
     }
     database.exec('COMMIT');

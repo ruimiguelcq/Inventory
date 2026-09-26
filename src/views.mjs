@@ -111,8 +111,17 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   const archivedView = !inventory && (filters.state === 'archived' || (!filters.state && Boolean(filters.archived)));
   const route = inventory ? '/inventory' : '/products';
   const title = inventory ? 'Inventario' : 'Productos';
+  const view = inventory ? 'inventory' : 'products';
+  const importHref = `/imports?view=${view}`;
   const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.category || filters.brand || filters.outOfStock || filters.lowStock);
   const csrfToken = session.csrfToken;
+  // The "all" export carries the current filters and view state, so it covers every matching page.
+  const exportParams = new URLSearchParams(queryParams);
+  exportParams.delete('page');
+  exportParams.delete('pageSize');
+  exportParams.set('view', view);
+  exportParams.set('scope', 'all');
+  const exportHref = `/exports?${exportParams.toString()}`;
 
   const badgeOf = (status) => status === 'agotado'
     ? '<span class="badge badge-out">Agotado</span>'
@@ -224,8 +233,8 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
         <h1>${title}</h1>
       </div>
       <div class="form-actions">
-        ${canManage ? `<a class="button button-secondary" href="/imports">${inventory ? 'Importar' : 'Importar productos'}</a>` : ''}
-        <a class="button button-secondary" href="/exports?scope=all">${inventory ? 'Exportar' : 'Exportar productos'}</a>
+        ${canManage ? `<a class="button button-secondary" href="${importHref}">${inventory ? 'Importar' : 'Importar productos'}</a>` : ''}
+        <a class="button button-secondary" href="${escapeHtml(exportHref)}">${inventory ? 'Exportar' : 'Exportar productos'}</a>
         ${canManage && !inventory ? '<a class="button button-primary" href="/products/new">Agregar producto</a>' : ''}
       </div>
     </div>
@@ -236,9 +245,10 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
         </div>
         <form id="export-selection" class="selection-actions" method="post" action="/exports">
           <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
+          <input type="hidden" name="view" value="${view}">
           <input type="hidden" name="scope" value="selected">
           <span data-selection-count role="status">0 seleccionados</span>
-          ${archivedView ? '' : '<button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>'}
+          <button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>
           ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
             <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
         </form>
@@ -468,27 +478,31 @@ export function historyPage({ product, movements, ...session }) {
     </section>`, session);
 }
 
-function importDetails(product) {
+function importDetails(product, categoryName) {
   if (!product) return 'Artículo nuevo';
   return `${escapeHtml(product.description)} · ${escapeHtml(product.presentation)}<br>
-    Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(product.minimumStock ?? product.minimum_stock ?? '—')}`;
+    Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(product.minimumStock ?? product.minimum_stock ?? '—')} · Categoría: ${escapeHtml(categoryName || 'Sin categoría')}`;
 }
 
-export function importPage({ review, confirmationToken, error = '', ...session }) {
+export function importPage({ review, confirmationToken, error = '', view = 'inventory', ...session }) {
+  const inventory = view === 'inventory';
+  const route = inventory ? '/inventory' : '/products';
+  const title = inventory ? 'Importar existencias' : 'Importar productos';
   const invalid = review?.rows.filter((row) => row.errors.length).length ?? 0;
-  return page('Importar Excel', `
-    <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><span>Importar Excel</span></div>
-    <div class="page-heading"><div><p class="eyebrow">Carga revisada</p><h1>${review ? 'Revisar importación' : 'Importar Excel'}</h1>
+  return page(title, `
+    <div class="breadcrumb"><a href="${route}">${inventory ? 'Inventario' : 'Productos'}</a><span>/</span><span>Importar Excel</span></div>
+    <div class="page-heading"><div><p class="eyebrow">Carga revisada</p><h1>${review ? 'Revisar importación' : title}</h1>
       <p>Los cambios solo se guardan al confirmar el lote completo.</p></div></div>
     ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
     ${review ? `
       <section class="inventory-panel" aria-label="Vista previa de importación">
         <div class="table-toolbar"><div><h2>${review.rows.filter((row) => !row.previous && !row.errors.length).length} altas · ${review.rows.filter((row) => row.previous && !row.errors.length).length} actualizaciones · ${invalid} filas con errores</h2>
-          <p>Datos descriptivos: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
+          <p>Catálogo y categoría: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
         <div class="table-scroll"><table><thead><tr><th>Fila</th><th>P/N</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Existencias</th><th>Errores</th></tr></thead>
           <tbody>${review.rows.map((row) => `<tr><td>${row.number}</td><td>${escapeHtml(row.partNumber)}</td>
             <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
-            <td>${importDetails(row.previous)}</td><td>${row.product ? importDetails(row.product) : '—'}</td>
+            <td>${importDetails(row.previous, row.previous?.category_name)}</td>
+            <td>${review.descriptions && row.product ? importDetails(row.product, row.categoryName) : (row.previous ? 'Sin cambios de catálogo' : '—')}</td>
             <td>${row.change ? `${row.change.previousQuantity} → ${row.change.newQuantity} ${escapeHtml(row.change.presentation)}<br>${review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${row.change.quantity}` : 'Sin cambios'}</td>
             <td>${row.errors.map(escapeHtml).join('<br>')}</td></tr>`).join('')}</tbody>
         </table></div>
@@ -496,32 +510,37 @@ export function importPage({ review, confirmationToken, error = '', ...session }
       ${invalid ? '<p class="form-error" role="alert">Corrige todas las filas con errores y vuelve a cargar el archivo. No se aplicará ninguna fila.</p>' : `
         <form method="post" action="/imports/confirm" class="form-actions">
           <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+          <input type="hidden" name="view" value="${view}">
           <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
           <button class="button button-primary" type="submit">Confirmar importación</button>
         </form>`}
       <form method="post" action="/imports/cancel" class="form-actions">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
-        <a class="button button-secondary" href="/imports">Cargar otro archivo</a>
+        <input type="hidden" name="view" value="${view}">
+        <a class="button button-secondary" href="/imports?view=${view}">Cargar otro archivo</a>
         <button class="button button-quiet" type="submit">Cancelar importación</button>
       </form>` : `
       <form class="product-form" method="post" action="/imports" enctype="multipart/form-data">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <input type="hidden" name="view" value="${view}">
         <section class="form-section"><h2>Archivo y opciones</h2>
           <p>Excel .xlsx, una sola hoja, hasta 2 MB y 1000 filas. Primera fila: encabezados.</p>
-          <p>Columnas: <strong>P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Cantidad</strong>.
-            Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Usa valores, sin fórmulas.</p>
-          <p>Para datos descriptivos se requieren P/N, Descripción y Presentación. Las columnas opcionales ausentes se conservan; las celdas vacías las borran.
-            Para solo existencias se requieren P/N y Cantidad y el artículo debe existir. Las altas sin stock comienzan en cero.</p>
+          ${inventory ? `
+          <p>Columnas: <strong>P/N, Cantidad</strong>. La importación de Inventario solo actualiza las existencias de artículos que ya existen y rechaza los P/N desconocidos.</p>
+          <p>Guarda P/N como texto para conservar ceros iniciales. Usa valores, sin fórmulas.</p>` : `
+          <p>Columnas: <strong>P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría</strong> y, opcionalmente, <strong>Cantidad</strong>.</p>
+          <p>Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Usa valores, sin fórmulas.</p>
+          <p>Se requieren P/N, Descripción y Presentación. La descripción se usa como nombre. Las columnas opcionales ausentes se conservan; las celdas vacías las borran.
+            Una categoría escrita se crea o reutiliza sin duplicar categorías equivalentes. Las altas sin stock comienzan en cero.</p>`}
           <div class="field"><label for="file">Archivo Excel</label><input id="file" name="file" type="file" accept=".xlsx" required></div>
-          <p><label><input type="checkbox" name="descriptions" checked> Importar datos descriptivos</label></p>
-          <p><label><input type="checkbox" name="stock"> Importar existencias</label></p>
-          <div class="field"><label for="operation">Operación para existencias</label><select id="operation" name="operation">
+          ${inventory ? '' : '<p><label><input type="checkbox" name="stock"> Importar existencias además del catálogo</label></p>'}
+          <div class="field"><label for="operation">Operación para existencias</label><select id="operation" name="operation" ${inventory ? 'required' : ''}>
             <option value="">Selecciona si importas existencias</option>
             <option value="adjust">Ajustar por — sumar o restar la cantidad importada</option>
             <option value="set">Establecer en — total exacto indicado</option>
           </select></div>
         </section>
-        <div class="form-actions"><a class="button button-quiet" href="/inventory">Volver al inventario</a>
+        <div class="form-actions"><a class="button button-quiet" href="${route}">Volver a ${inventory ? 'Inventario' : 'Productos'}</a>
           <button class="button button-primary" type="submit">Revisar importación</button></div>
       </form>`}`, session);
 }
