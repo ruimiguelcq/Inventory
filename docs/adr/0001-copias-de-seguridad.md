@@ -44,7 +44,8 @@ desde un solo ordenador.
   viva y se intercambia el archivo. La restauración se confirma con CSRF y un
   token de confirmación.
 - Verificar la restauración comparando la integridad y los recuentos de
-  artículos, movimientos y cuentas con la copia de origen.
+  artículos, movimientos, cuentas, categorías, listas de compra e imágenes con
+  la copia de origen.
 - Si algo falla después del intercambio, recuperar automáticamente la copia de
   seguridad del estado anterior y reabrir la base de datos, de modo que la
   operación nunca deja el inventario a medias.

@@ -23,6 +23,10 @@ function detectExtension(bytes) {
   return null;
 }
 
+function extensionOf(name) {
+  return extname(name).slice(1).toLowerCase();
+}
+
 function mimeTypeFor(extension) {
   return IMAGE_TYPES.find((type) => type.extension === extension)?.mimeType ?? null;
 }
@@ -54,7 +58,7 @@ export function readProductImage(directory, filename) {
   const safe = basename(String(filename));
   const path = join(directory, safe);
   if (!existsSync(path)) return null;
-  const mimeType = mimeTypeFor(extname(safe).slice(1).toLowerCase());
+  const mimeType = mimeTypeFor(extensionOf(safe));
   if (!mimeType) return null;
   return { bytes: readFileSync(path), mimeType };
 }
@@ -62,5 +66,5 @@ export function readProductImage(directory, filename) {
 // Backups and restores carry the image folder alongside the database snapshot.
 export function countImages(directory) {
   if (!directory || !existsSync(directory)) return 0;
-  return readdirSync(directory).filter((name) => mimeTypeFor(extname(name).slice(1).toLowerCase())).length;
+  return readdirSync(directory).filter((name) => mimeTypeFor(extensionOf(name))).length;
 }

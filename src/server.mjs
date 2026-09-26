@@ -68,29 +68,32 @@ function readCookies(header = '') {
   }));
 }
 
-async function readForm(request, maxLength = 16_384) {
-  let body = '';
+async function readBody(request, maxLength, tooLargeMessage) {
+  const chunks = [];
+  let size = 0;
+  let exceeded = false;
+  // Keep draining an oversized body so the connection stays healthy; only bounded data is kept.
   for await (const chunk of request) {
-    body += chunk;
-    if (body.length > maxLength) throw new Error('El formulario supera el tamaño permitido.');
+    size += chunk.length;
+    if (size > maxLength) exceeded = true;
+    else chunks.push(chunk);
   }
-  return new URLSearchParams(body);
+  if (exceeded) throw new Error(tooLargeMessage);
+  return Buffer.concat(chunks);
+}
+
+async function readForm(request, maxLength = 16_384) {
+  const body = await readBody(request, maxLength, 'El formulario supera el tamaño permitido.');
+  return new URLSearchParams(body.toString('utf8'));
 }
 
 // The product form can carry a file, so a multipart body is parsed as FormData; plain forms keep working.
 async function readProductForm(request) {
   const contentType = request.headers['content-type'] ?? '';
   if (!contentType.startsWith('multipart/form-data')) return readForm(request);
-  const maxLength = MAX_IMAGE_BYTES + 256 * 1024;
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxLength) throw new Error('La imagen supera el límite de 2 MB.');
-    chunks.push(chunk);
-  }
+  const body = await readBody(request, MAX_IMAGE_BYTES + 256 * 1024, 'La imagen supera el límite de 2 MB.');
   try {
-    return await new Response(Buffer.concat(chunks), { headers: { 'content-type': contentType } }).formData();
+    return await new Response(body, { headers: { 'content-type': contentType } }).formData();
   } catch {
     throw new Error('No se pudo leer el formulario. Inténtalo de nuevo.');
   }
@@ -170,6 +173,24 @@ function saveProduct(database, response, { form, session, product, isNew, existi
     throw error;
   }
   return redirect(response, '/products?saved=1');
+}
+
+// Both product routes share the same CSRF check, validation, image handling and error rendering.
+async function saveProductFromRequest(database, response, { request, session, id = null, imageDirectory }) {
+  const form = await readProductForm(request);
+  if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
+  const existingProduct = id === null ? undefined : findProduct(database, id);
+  if (id !== null && !existingProduct) return sendHtml(response, notFoundPage(session), 404);
+  const isNew = id === null;
+  const { error, product } = validateProduct(form);
+  const options = { isNew, previousProduct: existingProduct ?? {}, ...productFormOptions(database) };
+  if (error) return sendProductFormError(response, form, session, error, options);
+  const upload = await readImageUpload(form.get('image'));
+  if (upload.error) return sendProductFormError(response, form, session, upload.error, options);
+  return saveProduct(database, response, {
+    form, session, product, isNew, existingProduct, image: upload.image,
+    removeImage: form.get('removeImage') === 'on', imageDirectory,
+  });
 }
 
 function createSession(sessions, user) {
@@ -795,16 +816,7 @@ export function createInventoryServer({
       }
 
       if (request.method === 'POST' && url.pathname === '/products') {
-        const form = await readProductForm(request);
-        if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
-        const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error, productFormOptions(database));
-        const upload = await readImageUpload(form.get('image'));
-        if (upload.error) return sendProductFormError(response, form, session, upload.error, productFormOptions(database));
-        return saveProduct(database, response, {
-          form, session, product, isNew: true, image: upload.image,
-          removeImage: form.get('removeImage') === 'on', imageDirectory,
-        });
+        return await saveProductFromRequest(database, response, { request, session, imageDirectory });
       }
 
       if (request.method === 'POST' && ['/products/archive', '/products/restore'].includes(url.pathname)) {
@@ -850,19 +862,7 @@ export function createInventoryServer({
         return sendHtml(response, productDetailPage({ ...session, product }));
       }
       if (request.method === 'POST' && updateMatch) {
-        const form = await readProductForm(request);
-        if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
-        const id = Number(updateMatch[1]);
-        const existingProduct = findProduct(database, id);
-        if (!existingProduct) return sendHtml(response, notFoundPage(session), 404);
-        const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct, ...productFormOptions(database) });
-        const upload = await readImageUpload(form.get('image'));
-        if (upload.error) return sendProductFormError(response, form, session, upload.error, { isNew: false, previousProduct: existingProduct, ...productFormOptions(database) });
-        return saveProduct(database, response, {
-          form, session, product, isNew: false, existingProduct, image: upload.image,
-          removeImage: form.get('removeImage') === 'on', imageDirectory,
-        });
+        return await saveProductFromRequest(database, response, { request, session, id: Number(updateMatch[1]), imageDirectory });
       }
 
       return sendHtml(response, notFoundPage(session), 404);

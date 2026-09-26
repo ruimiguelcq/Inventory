@@ -72,6 +72,14 @@ function replaceDirectory(source, destination) {
   if (source && existsSync(source)) cpSync(source, destination, { recursive: true });
 }
 
+// A snapshot only counts as restorable if every product image it references is present.
+function missingImageCount(database, imagesPath) {
+  const columns = database.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
+  if (!columns.includes('image_filename')) return 0;
+  return database.prepare('SELECT image_filename FROM products WHERE image_filename IS NOT NULL').all()
+    .filter((row) => !existsSync(join(imagesPath, basename(row.image_filename)))).length;
+}
+
 // Opens a candidate backup read-only and reports whether it is a sound snapshot.
 export function inspectBackup(path) {
   const stats = statSync(path);
@@ -81,9 +89,11 @@ export function inspectBackup(path) {
     database = new DatabaseSync(path, { readOnly: true });
     const integrity = database.prepare('PRAGMA integrity_check').get().integrity_check;
     const counts = inspectCounts(database);
-    return { ...info, valid: integrity === 'ok', integrity, ...counts, images: countImages(backupImagesPath(path)) };
+    const imagesPath = backupImagesPath(path);
+    const missingImages = missingImageCount(database, imagesPath);
+    return { ...info, valid: integrity === 'ok' && missingImages === 0, integrity, ...counts, images: countImages(imagesPath), missingImages };
   } catch {
-    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null, images: 0 };
+    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null, images: 0, missingImages: null };
   } finally {
     database?.close();
   }
@@ -141,6 +151,8 @@ export function installStagedDatabase(databasePath, stagedPath, imageDirectory =
   }
   if (imageDirectory) replaceDirectory(backupImagesPath(stagedPath), imageDirectory);
   renameSync(stagedPath, databasePath);
+  // The staged image folder is a working copy; drop it once its content is live.
+  rmSync(backupImagesPath(stagedPath), { recursive: true, force: true });
 }
 
 export function replaceDatabaseFile(databasePath, backupPath, imageDirectory = null) {

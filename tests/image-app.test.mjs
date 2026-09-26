@@ -43,7 +43,7 @@ async function app(t, options = {}) {
     cookie = session.headers.get('set-cookie').split(';')[0];
     return token(await (await get('/inventory')).text());
   };
-  return { url, get, post, token, csrfToken, signIn, backupDirectory, imageDirectory, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
+  return { url, get, post, token, csrfToken, signIn, directory, backupDirectory, imageDirectory, get cookie() { return cookie; }, set cookie(value) { cookie = value; } };
 }
 
 // Builds the multipart product form, attaching an image file only when one is given.
@@ -181,6 +181,10 @@ test('backups include the images and a restore brings them back with a safety co
   const imageDirs = (await readdir(a.backupDirectory)).filter((name) => name.endsWith('.images'));
   const contents = await Promise.all(imageDirs.map((name) => readdir(join(a.backupDirectory, name))));
   assert.ok(contents.some((files) => files.some((name) => name.endsWith('.jpg'))), 'safety backup keeps the replaced image');
+
+  // Staging files are working copies and never linger beside the database.
+  const leftovers = (await readdir(a.directory)).filter((name) => name.includes('.restoring'));
+  assert.deepEqual(leftovers, []);
 });
 
 test('restoring a snapshot without images clears the images added later', async (t) => {
@@ -198,6 +202,21 @@ test('restoring a snapshot without images clears the images added later', async 
   })).status, 303);
   assert.equal((await a.get('/products/1/image')).status, 404);
   assert.doesNotMatch(await (await a.get('/products')).text(), /products\/1\/image/);
+});
+
+test('a snapshot whose referenced images are missing is not verifiable and cannot be restored', async (t) => {
+  const a = await app(t);
+  assert.equal((await a.post('/products', productForm(a.csrfToken, product, imageFile(PNG)))).status, 303);
+  assert.equal((await a.post('/backups', { csrfToken: a.csrfToken })).status, 303);
+  const listing = await (await a.get('/backups')).text();
+  const file = listing.match(/href="\/backups\/restore\?file=([^"]+)"/)[1];
+
+  // A copy that lost its image folder is not a sound restore point.
+  await rm(join(a.backupDirectory, `${file}.images`), { recursive: true, force: true });
+  const after = await (await a.get('/backups')).text();
+  assert.match(after, /No verificable/);
+  assert.equal((await a.get(`/backups/restore?file=${file}`)).status, 422);
+  assert.equal((await a.get('/products/1/image')).status, 200);
 });
 
 test('images are visible to every role but only gestión and administración can change them', async (t) => {
