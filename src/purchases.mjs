@@ -134,3 +134,33 @@ export function reopenPurchaseOrder(database, userId, purchaseOrderId) {
     setPurchaseOrderStatus(database, order.id, 'draft');
   }, { allowArchived: true });
 }
+
+// Adds a reviewed selection to a new or existing draft in one transaction. Every article must
+// still be active; repeated articles keep their existing line and requested quantity untouched,
+// and new lines start empty. Stock and history are never touched (see docs/adr/0001).
+export function addSelectionToPurchase(database, userId, { purchaseOrderId = null, productIds = [] } = {}) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    let orderId = purchaseOrderId;
+    if (orderId === null) {
+      orderId = Number(insertPurchaseOrder(database).lastInsertRowid);
+    } else {
+      const order = findPurchaseOrder(database, orderId);
+      if (!order) throw new PurchaseError('No encontramos esa lista de compra.', 404);
+      if (order.status !== 'draft') throw new PurchaseError('Reabre la lista para poder añadir artículos.', 409);
+    }
+    for (const productId of productIds) {
+      const product = findProduct(database, productId);
+      if (!product) throw new PurchaseError('Algún artículo de la selección ya no existe. Vuelve a seleccionarlos.');
+      if (product.archived) throw new PurchaseError('Solo puedes añadir artículos activos. Vuelve a seleccionarlos.');
+      if (!findPurchaseOrderLine(database, orderId, productId)) insertPurchaseOrderLine(database, orderId, productId);
+    }
+    touchPurchaseOrder(database, orderId);
+    database.exec('COMMIT');
+    return orderId;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}

@@ -251,6 +251,7 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
           <input type="hidden" name="scope" value="selected">
           <span data-selection-count role="status">0 seleccionados</span>
           <button class="button button-secondary" type="submit" data-requires-selection disabled>Exportar selección a Excel</button>
+          ${canManage && inventory ? '<button class="button button-secondary" type="submit" formaction="/purchase-orders/add-selection" data-requires-selection disabled>Añadir a lista de compra</button>' : ''}
           ${canManage && !inventory ? `<button class="button button-secondary" type="submit" formaction="/products/archive" data-requires-selection disabled>Archivar selección</button>
             <button class="button button-secondary" type="submit" formaction="/products/restore" data-requires-selection disabled>Desarchivar selección</button>` : ''}
         </form>
@@ -398,6 +399,47 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
       ${actions}</div>
     ${detail}`;
   return page(`Compra #${order.id}`, content, { ...session, active: 'purchases' });
+}
+
+// Review step for adding an Inventory selection: active articles only, new list or existing draft.
+export function purchaseSelectionPage({ products = [], orders = [], confirmationToken = '', error = '', ...session }) {
+  const rows = products.map((product) => {
+    const status = stockStatus(product);
+    return `<tr>
+      <td class="part-number">${escapeHtml(product.part_number)}</td>
+      <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
+      <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
+    </tr>`;
+  }).join('');
+  const destinationOptions = `<option value="new">Nueva lista de compra</option>
+    ${orders.map((order) => `<option value="${order.id}">Compra #${order.id} · ${order.line_count} ${order.line_count === 1 ? 'artículo' : 'artículos'}</option>`).join('')}`;
+
+  return page('Añadir a lista de compra', `
+    <div class="breadcrumb"><a href="/inventory">Inventario</a><span aria-hidden="true">/</span><span>Añadir a lista de compra</span></div>
+    <div class="page-heading"><div><p class="eyebrow">Selección revisada</p><h1>Añadir a lista de compra</h1>
+      <p class="page-subtitle">Solo se añaden artículos activos. Los artículos que ya están en la lista conservan su línea y cantidad; las líneas nuevas empiezan sin cantidad.</p></div></div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <section class="inventory-panel" aria-label="Artículos seleccionados">
+      <h2>${products.length} ${products.length === 1 ? 'artículo seleccionado' : 'artículos seleccionados'}</h2>
+      <div class="table-scroll"><table><thead><tr>
+        <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Existencias</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>
+    </section>
+    <form class="product-form" method="post" action="/purchase-orders/add-selection/confirm">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
+      <section class="form-section"><h2>Lista de destino</h2>
+        <div class="form-grid"><div class="field field-wide">
+          <label for="destination">Añadir a</label>
+          <select id="destination" name="destination" required>${destinationOptions}</select>
+          <p class="form-hint">Las listas archivadas no se ofrecen como destino; reábrelas para seguir editándolas.</p>
+        </div></div>
+      </section>
+      <div class="form-actions">
+        <a class="button button-quiet" href="/inventory">Cancelar</a>
+        <button class="button button-primary" type="submit">Añadir a la lista</button>
+      </div>
+    </form>`, { ...session, active: 'inventory' });
 }
 
 export function productDetailPage({ product, ...session }) {

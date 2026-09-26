@@ -122,6 +122,8 @@ Cualquier miembro del equipo con sesión iniciada (**Consulta**, **Gestión** o 
 
 Gestión y Administración pueden **Archivar** una lista para conservarla sin ediciones y **Reabrir** una archivada para recuperar el borrador. Archivar o reabrir no altera existencias ni historial. Las listas archivadas siguen consultándose y exportándose. Los artículos archivados que ya formaban parte de la lista siguen visibles como archivados y se incluyen al exportar; pueden retirarse mientras la lista sea un borrador.
 
+Desde **Inventario**, Gestión y Administración pueden marcar artículos y usar **Añadir a lista de compra** para incorporar la selección a una lista nueva o a un borrador existente. La selección se revisa antes de confirmar: solo se añaden artículos activos y las listas archivadas no se ofrecen como destino hasta reabrirlas. Cada artículo aparece una sola vez; si ya estaba en la lista, conserva su línea y su cantidad, y las líneas nuevas empiezan sin cantidad. La operación no cambia existencias ni historial.
+
 Las listas y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 
 ## Copias de seguridad
