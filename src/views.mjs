@@ -673,10 +673,14 @@ export function historyPage({ product, movements, ...session }) {
     </section>`, session);
 }
 
-function importDetails(product, categoryName) {
+function importDetails(product, names = {}) {
   if (!product) return 'Artículo nuevo';
-  return `${escapeHtml(product.description)} · ${escapeHtml(product.presentation)}<br>
-    Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(product.minimumStock ?? product.minimum_stock ?? '—')} · Categoría: ${escapeHtml(categoryName || 'Sin categoría')}`;
+  const longDescription = product.long_description ?? product.longDescription ?? '';
+  const priceCents = product.price_cents ?? product.priceCents ?? null;
+  const minimum = product.minimum_stock ?? product.minimumStock;
+  return `${escapeHtml(product.description)} · ${escapeHtml(product.presentation)}${longDescription ? `<br>${escapeHtml(longDescription)}` : ''}<br>
+    Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(minimum ?? '—')} · Categoría: ${escapeHtml(names.category || 'Sin categoría')}
+    · Tipo: ${escapeHtml(names.productType || '—')} · Proveedor: ${escapeHtml(names.supplier || '—')} · Precio: ${priceCents == null ? '—' : `$${formatCents(priceCents)}`}`;
 }
 
 export function importPage({ review, confirmationToken, error = '', view = 'inventory', ...session }) {
@@ -692,12 +696,12 @@ export function importPage({ review, confirmationToken, error = '', view = 'inve
     ${review ? `
       <section class="inventory-panel" aria-label="Vista previa de importación">
         <div class="table-toolbar"><div><h2>${review.rows.filter((row) => !row.previous && !row.errors.length).length} altas · ${review.rows.filter((row) => row.previous && !row.errors.length).length} actualizaciones · ${invalid} filas con errores</h2>
-          <p>Catálogo y categoría: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
+          <p>Catálogo, categoría, tipo y proveedor: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
         <div class="table-scroll"><table><thead><tr><th>Fila</th><th>P/N</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Existencias</th><th>Errores</th></tr></thead>
           <tbody>${review.rows.map((row) => `<tr><td>${row.number}</td><td>${escapeHtml(row.partNumber)}</td>
             <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
-            <td>${importDetails(row.previous, row.previous?.category_name)}</td>
-            <td>${review.descriptions && row.product ? importDetails(row.product, row.categoryName) : (row.previous ? 'Sin cambios de catálogo' : '—')}</td>
+            <td>${importDetails(row.previous, { category: row.previous?.category_name, productType: row.previous?.product_type_name, supplier: row.previous?.supplier_name })}</td>
+            <td>${review.descriptions && row.product ? importDetails(row.product, { category: row.categoryName, productType: row.productTypeName, supplier: row.supplierName }) : (row.previous ? 'Sin cambios de catálogo' : '—')}</td>
             <td>${row.change ? `${row.change.previousQuantity} → ${row.change.newQuantity} ${escapeHtml(row.change.presentation)}<br>${review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${row.change.quantity}` : 'Sin cambios'}</td>
             <td>${row.errors.map(escapeHtml).join('<br>')}</td></tr>`).join('')}</tbody>
         </table></div>
@@ -723,10 +727,11 @@ export function importPage({ review, confirmationToken, error = '', view = 'inve
           ${inventory ? `
           <p>Columnas: <strong>P/N, Cantidad</strong>. La importación de Inventario solo actualiza las existencias de artículos que ya existen y rechaza los P/N desconocidos.</p>
           <p>Guarda P/N como texto para conservar ceros iniciales. Usa valores, sin fórmulas.</p>` : `
-          <p>Columnas: <strong>P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría</strong> y, opcionalmente, <strong>Cantidad</strong>.</p>
-          <p>Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Usa valores, sin fórmulas.</p>
-          <p>Se requieren P/N, Descripción y Presentación. La descripción se usa como nombre. Las columnas opcionales ausentes se conservan; las celdas vacías las borran.
-            Una categoría escrita se crea o reutiliza sin duplicar categorías equivalentes. Las altas sin stock comienzan en cero.</p>`}
+          <p>Columnas: <strong>P/N, Producto, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría, Tipo, Proveedor, Precio, Estado</strong> y, opcionalmente, <strong>Cantidad</strong>.</p>
+          <p>Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Precio en dólares con hasta dos decimales. Usa valores, sin fórmulas.</p>
+          <p>Se requieren P/N, Producto (o Descripción en archivos antiguos) y Presentación. «Producto» es el nombre y «Descripción» la descripción larga; si el archivo solo trae «Descripción», se usa como nombre.
+            Las columnas opcionales ausentes se conservan; las celdas vacías las borran. Categoría, tipo y proveedor escritos se crean o reutilizan sin duplicar equivalentes.
+            «Estado» es informativo: archivar y desarchivar se hace desde la ficha del producto. Las altas sin stock comienzan en cero.</p>`}
           <div class="field"><label for="file">Archivo Excel</label><input id="file" name="file" type="file" accept=".xlsx" required></div>
           ${inventory ? '' : '<p><label><input type="checkbox" name="stock"> Importar existencias además del catálogo</label></p>'}
           <div class="field"><label for="operation">Operación para existencias</label><select id="operation" name="operation" ${inventory ? 'required' : ''}>

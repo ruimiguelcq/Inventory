@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { findOrCreateNamed, findUser, insertProduct, updateProduct } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, setProductClassification, updateProduct } from './database.mjs';
 import { validateProduct } from './products.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock, reviewStock, StockError } from './stock.mjs';
@@ -7,13 +7,27 @@ import { recordStock, reviewStock, StockError } from './stock.mjs';
 const MAX_UPLOAD = 2 * 1024 * 1024;
 const MAX_ROWS = 1000;
 const VIEWS = ['products', 'inventory'];
+// "Producto" is the name and "Descripción" its long description. A file that only brings
+// "Descripción" (the v1.1 layout) is resolved afterwards as the name.
 const columns = new Map([
-  ['p/n', 'partNumber'], ['descripcion', 'description'], ['presentacion', 'presentation'],
+  ['p/n', 'partNumber'], ['producto', 'description'], ['descripcion', 'longDescription'],
+  ['presentacion', 'presentation'],
   ['marca', 'brand'], ['ubicacion', 'location'], ['ubicacion principal', 'location'],
   ['minimo de stock', 'minimumStock'], ['minimo', 'minimumStock'],
   ['categoria', 'category'],
+  ['tipo', 'productType'], ['tipo de producto', 'productType'],
+  ['proveedor', 'supplier'],
+  ['precio', 'price'],
+  ['estado', 'state'],
   ['cantidad', 'quantity'], ['disponible', 'quantity'],
 ]);
+
+// Category, product type and supplier grow on import with the same mechanism.
+const NAMED_LISTS = {
+  category: { table: 'categories', tooLong: 'La categoría no puede superar los 100 caracteres.' },
+  productType: { table: 'product_types', tooLong: 'El tipo de producto no puede superar los 100 caracteres.' },
+  supplier: { table: 'suppliers', tooLong: 'El proveedor no puede superar los 100 caracteres.' },
+};
 
 export class ImportError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -51,6 +65,8 @@ function descriptiveProduct(product) {
     brand: product.brand, location: product.location, minimumStock: product.minimum_stock };
 }
 
+const CLASSIC_FIELDS = ['partNumber', 'description', 'presentation', 'brand', 'location', 'minimumStock'];
+
 async function readSpreadsheet(file) {
   if (!file || typeof file.arrayBuffer !== 'function' || !/\.xlsx$/i.test(file.name) || !file.size) throw new ImportError('Selecciona un archivo Excel .xlsx válido.');
   if (file.size > MAX_UPLOAD) throw new ImportError('El archivo supera el límite de 2 MB.');
@@ -74,6 +90,11 @@ async function readSpreadsheet(file) {
       if (!mappedColumns.has(index)) throw new ImportError(`La fila ${number} contiene datos sin encabezado de columna.`);
     });
   });
+  // With no "Producto" column, a lone "Descripción" keeps its v1.1 meaning: the article name.
+  if (!mapping.has('description') && mapping.has('longDescription')) {
+    mapping.set('description', mapping.get('longDescription'));
+    mapping.delete('longDescription');
+  }
   return { sheet, mapping };
 }
 
@@ -89,7 +110,7 @@ export async function previewImport(database, form, view) {
   const required = ['partNumber', ...(descriptions ? ['description', 'presentation'] : []), ...(stock ? ['quantity'] : [])];
   if (required.some((field) => !mapping.has(field))) {
     throw new ImportError(descriptions
-      ? 'Faltan columnas obligatorias: P/N, Descripción y Presentación, y Cantidad si importas existencias.'
+      ? 'Faltan columnas obligatorias: P/N, Producto (o Descripción) y Presentación, y Cantidad si importas existencias.'
       : 'Faltan columnas obligatorias para Inventario: P/N y Cantidad.');
   }
   const rows = [];
@@ -97,7 +118,8 @@ export async function previewImport(database, form, view) {
   for (let number = 2; number <= sheet.rowCount; number++) {
     const excelRow = sheet.getRow(number);
     if (!excelRow.hasValues) continue;
-    const row = { number, errors: [], partNumber: '', previous: null, product: null, category: undefined, categoryName: null, change: null };
+    const row = { number, errors: [], partNumber: '', previous: null, product: null, category: undefined,
+      productType: undefined, supplier: undefined, categoryName: null, productTypeName: null, supplierName: null, change: null };
     try {
       row.partNumber = cellText(excelRow.getCell(mapping.get('partNumber')));
       if (typeof excelRow.getCell(mapping.get('partNumber')).value === 'number') throw new ImportError('Guarda el P/N como texto en Excel para conservar su formato y ceros iniciales.');
@@ -107,20 +129,26 @@ export async function previewImport(database, form, view) {
       row.product = row.previous ? descriptiveProduct(row.previous) : {};
       if (descriptions) {
         const values = new URLSearchParams();
-        for (const field of ['partNumber', 'description', 'presentation', 'brand', 'location', 'minimumStock']) {
+        for (const field of CLASSIC_FIELDS) {
           values.set(field, mapping.has(field) ? cellText(excelRow.getCell(mapping.get(field))) : row.product[field] ?? '');
         }
+        // A present long-description/price column replaces the value; an absent one preserves it.
+        if (mapping.has('longDescription')) values.set('longDescription', cellText(excelRow.getCell(mapping.get('longDescription'))));
+        if (mapping.has('price')) values.set('price', cellText(excelRow.getCell(mapping.get('price'))));
         const validated = validateProduct(values);
         if (validated.error) throw new ImportError(validated.error);
         row.product = validated.product;
-        if (mapping.has('category')) {
-          const name = cellText(excelRow.getCell(mapping.get('category')));
-          if (name.length > 100) throw new ImportError('La categoría no puede superar los 100 caracteres.');
-          // An empty cell clears the category; an absent column preserves the current one.
-          row.category = name || null;
+        for (const [field, { tooLong }] of Object.entries(NAMED_LISTS)) {
+          if (!mapping.has(field)) continue;
+          const name = cellText(excelRow.getCell(mapping.get(field)));
+          if (name.length > 100) throw new ImportError(tooLong);
+          // An empty cell clears the value; an absent column preserves the current one.
+          row[field] = name || null;
         }
       }
       row.categoryName = row.category === undefined ? row.previous?.category_name ?? null : row.category;
+      row.productTypeName = row.productType === undefined ? row.previous?.product_type_name ?? null : row.productType;
+      row.supplierName = row.supplier === undefined ? row.previous?.supplier_name ?? null : row.supplier;
       if (stock) {
         const base = descriptions
           ? { ...(row.previous ?? {}), quantity: row.previous?.quantity ?? 0, presentation: row.product.presentation }
@@ -142,11 +170,22 @@ export async function previewImport(database, form, view) {
   return { rows, descriptions, stock, operation, view };
 }
 
-// Categories are reused case-insensitively so equivalent names never duplicate.
-function assignCategory(database, productId, category) {
-  if (category === undefined) return;
-  const categoryId = category ? findOrCreateNamed(database, 'categories', category) : null;
-  database.prepare('UPDATE products SET category_id = ? WHERE id = ?').run(categoryId, productId);
+// Named lists are reused case-insensitively so equivalent names never duplicate. An absent
+// column keeps the stored reference; an empty cell clears it.
+function namedListId(database, field, value, existingId) {
+  if (value === undefined) return existingId ?? null;
+  return value ? findOrCreateNamed(database, NAMED_LISTS[field].table, value) : null;
+}
+
+function classification(database, row) {
+  const previous = row.previous;
+  return {
+    longDescription: row.product.longDescriptionProvided ? row.product.longDescription : (previous?.long_description ?? null),
+    priceCents: row.product.priceProvided ? row.product.priceCents : (previous?.price_cents ?? null),
+    categoryId: namedListId(database, 'category', row.category, previous?.category_id),
+    productTypeId: namedListId(database, 'productType', row.productType, previous?.product_type_id),
+    supplierId: namedListId(database, 'supplier', row.supplier, previous?.supplier_id),
+  };
 }
 
 export function applyImport(database, userId, review) {
@@ -164,7 +203,7 @@ export function applyImport(database, userId, review) {
       if (review.descriptions) {
         if (!id) id = Number(insertProduct(database, row.product).lastInsertRowid);
         else updateProduct(database, id, row.product);
-        assignCategory(database, id, row.category);
+        setProductClassification(database, id, classification(database, row));
       }
       if (row.change) recordStock(database, userId, { ...row.change, productId: id }, 'import');
     }

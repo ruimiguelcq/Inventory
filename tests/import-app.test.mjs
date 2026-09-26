@@ -106,6 +106,83 @@ test('category columns follow the optional-column rule: absent preserves, empty 
   assert.doesNotMatch(longHtml, /Confirmar importación/);
 });
 
+test('the expanded columns import long description, price, type and supplier, reusing the named lists', async (t) => {
+  const a = await app(t);
+  const headers = ['P/N', 'Producto', 'Descripción', 'Presentación', 'Marca', 'Ubicación', 'Mínimo de stock', 'Categoría', 'Tipo', 'Proveedor', 'Precio', 'Estado', 'Cantidad'];
+  const preview = await a.upload([headers,
+    ['EXP-1', 'Junta nueva', 'Descripción larga de la junta', 'KIT', 'Motor', 'Caja 1', 3, 'Juntas', 'Repuesto', 'Marino S.A.', '10.50', 'Activo', 4]],
+  { stock: 'on', operation: 'set' });
+  assert.equal(preview.status, 200);
+  const html = await preview.text();
+  assert.match(html, /Descripción larga de la junta/);
+  assert.match(html, /Repuesto/);
+  assert.match(html, /Marino S\.A\./);
+  assert.match(html, /\$10\.50/);
+  assert.equal((await a.post('/imports/confirm', { csrfToken: a.csrfToken, confirmationToken: a.token(html, 'confirmationToken') })).status, 303);
+  const detail = await (await a.get('/products/1')).text();
+  assert.match(detail, /<h1>Junta nueva<\/h1>/);
+  assert.match(detail, /Descripción larga de la junta/);
+  assert.match(detail, /Tipo de producto<\/dt><dd>Repuesto/);
+  assert.match(detail, /Proveedor<\/dt><dd>Marino S\.A\./);
+  assert.match(detail, /\$10\.50/);
+  assert.match(await (await a.get('/products/1/stock')).text(), /Disponible: <strong>4<\/strong>/);
+  // Equivalent type and supplier names reuse the lists instead of duplicating them.
+  assert.equal((await a.confirm(await a.upload([['P/N', 'Producto', 'Presentación', 'Tipo', 'Proveedor'], ['EXP-2', 'Otra junta', 'KIT', 'repuesto', 'marino s.a.']]))).status, 303);
+  const edit = await (await a.get('/products/1/edit')).text();
+  assert.equal([...edit.matchAll(/>Repuesto<\/option>/g)].length, 1);
+  assert.equal([...edit.matchAll(/>Marino S\.A\.<\/option>/g)].length, 1);
+});
+
+test('the Estado column is accepted on import but never archives or restores', async (t) => {
+  const a = await app(t);
+  const open = await a.upload([['P/N', 'Producto', 'Descripción', 'Presentación', 'Estado'], ['EST', 'Con estado', 'Larga', 'KIT', 'Activo']]);
+  assert.equal((await a.post('/imports/confirm', { csrfToken: a.csrfToken, confirmationToken: a.token(await open.text(), 'confirmationToken') })).status, 303);
+  assert.match(await (await a.get('/products/1')).text(), /Estado<\/dt><dd>Activo/);
+  assert.equal((await a.post('/products/1/archive', { csrfToken: a.csrfToken })).status, 303);
+  // Importing "Activo" keeps the archived state, and the absent description column preserves it too.
+  const archived = await a.upload([['P/N', 'Producto', 'Presentación', 'Estado'], ['EST', 'Con estado', 'KIT', 'Activo']]);
+  assert.equal((await a.post('/imports/confirm', { csrfToken: a.csrfToken, confirmationToken: a.token(await archived.text(), 'confirmationToken') })).status, 303);
+  const detail = await (await a.get('/products/1')).text();
+  assert.match(detail, /Estado<\/dt><dd>Archivado/);
+  assert.match(detail, /Larga/);
+});
+
+test('the expanded optional columns follow the absent-preserves, empty-clears rule', async (t) => {
+  const a = await app(t);
+  const headers = ['P/N', 'Producto', 'Presentación', 'Descripción', 'Tipo', 'Proveedor', 'Precio', 'Categoría'];
+  assert.equal((await a.confirm(await a.upload([headers, ['EXT', 'Con datos', 'KIT', 'Larga', 'Repuesto', 'Marino', '9.99', 'Motor']]))).status, 303);
+  const filled = await (await a.get('/products/1')).text();
+  assert.match(filled, /<h1>Con datos<\/h1>/);
+  assert.match(filled, /Larga/);
+  assert.match(filled, /Tipo de producto<\/dt><dd>Repuesto/);
+  assert.match(filled, /Proveedor<\/dt><dd>Marino/);
+  assert.match(filled, /\$9\.99/);
+  // Absent columns preserve every value.
+  assert.equal((await a.confirm(await a.upload([['P/N', 'Producto', 'Presentación'], ['EXT', 'Renombrado', 'KIT']]))).status, 303);
+  const preserved = await (await a.get('/products/1')).text();
+  assert.match(preserved, /Larga/);
+  assert.match(preserved, /Tipo de producto<\/dt><dd>Repuesto/);
+  assert.match(preserved, /Proveedor<\/dt><dd>Marino/);
+  assert.match(preserved, /\$9\.99/);
+  // Empty cells clear every optional value.
+  assert.equal((await a.confirm(await a.upload([headers, ['EXT', 'Sin datos', 'KIT', '', '', '', '', '']]))).status, 303);
+  const cleared = await (await a.get('/products/1')).text();
+  assert.match(cleared, /<h1>Sin datos<\/h1>/);
+  assert.match(cleared, /Descripción<\/dt><dd class="long-description">—/);
+  assert.match(cleared, /Tipo de producto<\/dt><dd>—/);
+  assert.match(cleared, /Proveedor<\/dt><dd>—/);
+  assert.match(cleared, /Precio<\/dt><dd>—/);
+  assert.match(cleared, /Categoría<\/dt><dd>Sin categoría/);
+});
+
+test('a file that only brings Descripción still imports it as the product name', async (t) => {
+  const a = await app(t);
+  assert.equal((await a.confirm(await a.upload([['P/N', 'Descripción', 'Presentación'], ['VIEJO', 'Nombre antiguo', 'SET']]))).status, 303);
+  const detail = await (await a.get('/products/1')).text();
+  assert.match(detail, /<h1>Nombre antiguo<\/h1>/);
+  assert.match(detail, /Descripción<\/dt><dd class="long-description">—/);
+});
+
 test('invalid rows and duplicates block the whole batch, including data without a column heading', async (t) => {
   const a = await app(t);
   const preview = await a.upload([

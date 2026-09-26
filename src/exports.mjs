@@ -32,23 +32,48 @@ async function writeSheet(columns, products, title) {
 
 const PRODUCT_COLUMNS = [
   { header: 'P/N', key: 'part_number', width: 24, style: { numFmt: '@' } },
-  { header: 'Descripción', key: 'description', width: 48 },
+  { header: 'Producto', key: 'description', width: 48 },
+  { header: 'Descripción', key: 'long_description', width: 48 },
   { header: 'Presentación', key: 'presentation', width: 16 },
   { header: 'Marca', key: 'brand', width: 24 },
   { header: 'Ubicación', key: 'location', width: 28 },
   { header: 'Mínimo de stock', key: 'minimum_stock', width: 20 },
   { header: 'Categoría', key: 'category_name', width: 24 },
+  { header: 'Tipo', key: 'product_type_name', width: 24 },
+  { header: 'Proveedor', key: 'supplier_name', width: 24 },
+  { header: 'Precio', key: 'price', width: 14, style: { numFmt: '0.00' } },
+  { header: 'Estado', key: 'state', width: 12 },
   { header: 'Cantidad', key: 'quantity', width: 16 },
 ];
 
 const INVENTORY_COLUMNS = [
   { header: 'P/N', key: 'part_number', width: 24, style: { numFmt: '@' } },
-  { header: 'Descripción', key: 'description', width: 48 },
+  { header: 'Producto', key: 'description', width: 48 },
   { header: 'Cantidad', key: 'quantity', width: 16 },
 ];
 
+// Dollars as a number so Excel can work with the price; the two-decimal format is display only.
+// The state is informational: archiving still happens from the product form.
+function productExportRow(product) {
+  return {
+    part_number: product.part_number,
+    description: product.description,
+    long_description: product.long_description,
+    presentation: product.presentation,
+    brand: product.brand,
+    location: product.location,
+    minimum_stock: product.minimum_stock,
+    category_name: product.category_name,
+    product_type_name: product.product_type_name,
+    supplier_name: product.supplier_name,
+    price: product.price_cents == null ? null : product.price_cents / 100,
+    state: product.archived ? 'Archivado' : 'Activo',
+    quantity: product.quantity,
+  };
+}
+
 export function exportProducts(products) {
-  return writeSheet(PRODUCT_COLUMNS, products, 'Productos');
+  return writeSheet(PRODUCT_COLUMNS, products.map(productExportRow), 'Productos');
 }
 
 export function exportInventory(products) {

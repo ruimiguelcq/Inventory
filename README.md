@@ -66,29 +66,30 @@ La primera ejecución tras esta actualización añade las tablas y columnas nece
 
 Desde **Productos → Importar productos** o **Inventario → Importar**, Gestión y Administración cargan un archivo `.xlsx` con una sola hoja, hasta 2 MB y 1000 filas de datos. Cada vista tiene su propio alcance.
 
-**Productos** importa el catálogo y sus categorías y, opcionalmente, las existencias en el mismo lote. La primera fila contiene los encabezados:
+**Productos** importa el catálogo, sus categorías, tipos y proveedores y, opcionalmente, las existencias en el mismo lote. La primera fila contiene los encabezados:
 
-| P/N | Descripción | Presentación | Marca | Ubicación | Mínimo de stock | Categoría | Cantidad |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 001-MAR | Junta de motor | KIT | Marina Parts | Caja 4 | 2 | Motor | 5 |
+| P/N | Producto | Descripción | Presentación | Marca | Ubicación | Mínimo de stock | Categoría | Tipo | Proveedor | Precio | Estado | Cantidad |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 001-MAR | Junta de motor | Junta con retén reforzado | KIT | Marina Parts | Caja 4 | 2 | Motor | Repuesto | Marino S.A. | 12.50 | Activo | 5 |
 
-- Guarda **P/N como texto** en Excel, incluidos los identificadores numéricos, para conservar ceros iniciales. Usa valores sin fórmulas. Presentaciones admitidas: `SET`, `KIT`, `unidad`.
-- **Catálogo:** requiere P/N, Descripción y Presentación; crea artículos o actualiza los existentes por P/N, sin distinguir mayúsculas ASCII. La descripción es el nombre del artículo. Marca, Ubicación, Mínimo de stock y Categoría son opcionales: una columna ausente conserva el valor existente y una celda vacía lo borra. Las categorías escritas se crean o reutilizan sin duplicar categorías equivalentes. Las altas sin importar existencias comienzan en cero.
+- Guarda **P/N como texto** en Excel, incluidos los identificadores numéricos, para conservar ceros iniciales. Usa valores sin fórmulas. Presentaciones admitidas: `SET`, `KIT`, `unidad`. El precio se escribe en dólares con hasta dos decimales.
+- **Catálogo:** requiere P/N, Producto (o Descripción en archivos antiguos) y Presentación; crea artículos o actualiza los existentes por P/N, sin distinguir mayúsculas ASCII. `Producto` es el nombre y `Descripción` la descripción larga; si el archivo solo trae `Descripción`, se usa como nombre, de modo que los archivos de la v1.1 siguen importándose. Marca, Ubicación, Mínimo de stock, Categoría, Tipo, Proveedor y Precio son opcionales: una columna ausente conserva el valor existente y una celda vacía lo borra. Las categorías, tipos y proveedores escritos se crean o reutilizan sin duplicar equivalentes. Las altas sin importar existencias comienzan en cero.
+- **Estado** es informativo: se importa sin archivar ni desarchivar; el estado se cambia desde la ficha del producto. Las imágenes no forman parte del Excel.
 - **Existencias (opcional en Productos):** requiere la columna Cantidad. Elige explícitamente **Ajustar por** (sumar/restar) o **Establecer en** (total exacto). Las cantidades deben ser enteras y el resultado no puede ser negativo.
 
 **Inventario** importa solo cantidades de artículos existentes. La primera fila contiene los encabezados:
 
-| P/N | Descripción | Cantidad |
+| P/N | Producto | Cantidad |
 | --- | --- | --- |
 | 001-MAR | Junta de motor | 5 |
 
 - Requiere P/N y Cantidad. La importación actualiza las existencias de artículos que ya existen y **rechaza los P/N desconocidos en lugar de crearlos**. Elige explícitamente **Ajustar por** o **Establecer en**.
 
-También se aceptan los encabezados `Ubicación principal`, `Mínimo` y `Disponible`, y encabezados sin acentos.
+También se aceptan los encabezados `Ubicación principal`, `Mínimo`, `Disponible`, `Tipo de producto` y encabezados sin acentos.
 
-**Revisar importación** muestra altas, actualizaciones, datos anteriores/nuevos y errores por fila; la categoría forma parte de la misma operación. Los P/N duplicados dentro del archivo, campos obligatorios ausentes, fórmulas o cantidades inválidas bloquean el lote completo: corrige el archivo y vuelve a cargarlo. No se omiten filas inválidas ni se guardan cambios al previsualizar.
+**Revisar importación** muestra altas, actualizaciones, datos anteriores/nuevos y errores por fila; categoría, tipo y proveedor forman parte de la misma operación. Los P/N duplicados dentro del archivo, campos obligatorios ausentes, fórmulas o cantidades inválidas bloquean el lote completo: corrige el archivo y vuelve a cargarlo. No se omiten filas inválidas ni se guardan cambios al previsualizar.
 
-**Confirmar importación** guarda todo en una única transacción, incluidas las categorías. Si los artículos o sus existencias han cambiado desde la vista previa, exige revisarla de nuevo. El historial registra cada operación de stock con usuario, fecha/hora y origen **Importación Excel**. **Cancelar importación** descarta la revisión y no modifica datos. Una confirmación solo puede usarse una vez y pertenece a la sesión que la creó; otra vista previa válida sustituye la anterior. Las revisiones pendientes se pierden al cerrar sesión o reiniciar.
+**Confirmar importación** guarda todo en una única transacción, incluidas las categorías, tipos y proveedores. Si los artículos o sus existencias han cambiado desde la vista previa, exige revisarla de nuevo. El historial registra cada operación de stock con usuario, fecha/hora y origen **Importación Excel**. **Cancelar importación** descarta la revisión y no modifica datos. Una confirmación solo puede usarse una vez y pertenece a la sesión que la creó; otra vista previa válida sustituye la anterior. Las revisiones pendientes se pierden al cerrar sesión o reiniciar.
 
 La dependencia ExcelJS usa una sustitución de `uuid` por su versión 11 corregida, compatible con la API `v4` que utiliza.
 
@@ -96,8 +97,8 @@ La dependencia ExcelJS usa una sustitución de `uuid` por su versión 11 corregi
 
 Desde **Productos** y **Inventario**, cualquier miembro del equipo con sesión iniciada (Consulta, Gestión o Administración) puede descargar:
 
-- **Exportar productos** (Productos): el catálogo con P/N, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría y Cantidad en `productos.xlsx`.
-- **Exportar** (Inventario): P/N, Descripción y Cantidad de los artículos activos en `inventario.xlsx`.
+- **Exportar productos** (Productos): el catálogo con P/N, Producto, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría, Tipo, Proveedor, Precio, Estado y Cantidad en `productos.xlsx`. El estado se muestra como `Activo` o `Archivado`; el Excel no incluye imágenes.
+- **Exportar** (Inventario): P/N, Producto y Cantidad de los artículos activos en `inventario.xlsx`.
 
 La exportación completa respeta la búsqueda y el estado de la vista y recorre **todas las páginas**, no solo la visible. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.
 

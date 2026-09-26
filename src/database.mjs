@@ -263,8 +263,8 @@ export function updateProduct(database, id, product) {
   );
 }
 
-// Extended fields and named-list references live apart from the columnar product write,
-// so import/export can keep touching only the classic columns.
+// Extended fields and named-list references are written in one place, shared by the product
+// form and the Excel import so both preserve or clear them the same way.
 export function setProductClassification(database, id, { longDescription, priceCents, categoryId, productTypeId, supplierId }) {
   return database.prepare(`
     UPDATE products

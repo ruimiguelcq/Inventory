@@ -44,7 +44,8 @@ async function setStock(a, id, quantity) {
 // Catalog for the exports: ids 1..3 with a category, a text brand and quantities.
 async function seed(a) {
   for (const product of [
-    { partNumber: '00123', description: 'Junta <marina> & retén', presentation: 'KIT', brand: '=Motor', location: 'Estante Ñ', minimumStock: '0', newCategory: 'Motor' },
+    { partNumber: '00123', description: 'Junta <marina> & retén', presentation: 'KIT', brand: '=Motor', location: 'Estante Ñ', minimumStock: '0',
+      newCategory: 'Motor', newProductType: 'Repuesto', newSupplier: 'Marino S.A.', longDescription: 'Junta con retén de repuesto', price: '12.34' },
     { partNumber: 'B-2', description: 'Ánodo', presentation: 'unidad' },
     { partNumber: 'C-3', description: 'Juego completo', presentation: 'SET', minimumStock: '2' },
   ]) assert.equal((await a.post('/products', { csrfToken: a.csrfToken, ...product })).status, 303);
@@ -87,15 +88,35 @@ test('Productos exports the descriptive catalog with its category and inventory 
   assert.match(link, /view=products/);
   const { sheet } = await download(await a.get(link), 'productos.xlsx');
   assert.equal(sheet.rowCount, 4);
-  assert.deepEqual(sheet.getRow(1).values.slice(1), ['P/N', 'Descripción', 'Presentación', 'Marca', 'Ubicación', 'Mínimo de stock', 'Categoría', 'Cantidad']);
-  assert.deepEqual(sheet.getRow(2).values.slice(1), ['00123', 'Junta <marina> & retén', 'KIT', '=Motor', 'Estante Ñ', 0, 'Motor', 7]);
+  assert.deepEqual(sheet.getRow(1).values.slice(1),
+    ['P/N', 'Producto', 'Descripción', 'Presentación', 'Marca', 'Ubicación', 'Mínimo de stock', 'Categoría', 'Tipo', 'Proveedor', 'Precio', 'Estado', 'Cantidad']);
+  assert.deepEqual(sheet.getRow(2).values.slice(1),
+    ['00123', 'Junta <marina> & retén', 'Junta con retén de repuesto', 'KIT', '=Motor', 'Estante Ñ', 0, 'Motor', 'Repuesto', 'Marino S.A.', 12.34, 'Activo', 7]);
   assert.equal(sheet.getCell('A2').type, ExcelJS.ValueType.String);
-  assert.equal(sheet.getCell('D2').type, ExcelJS.ValueType.String);
+  assert.equal(sheet.getCell('E2').type, ExcelJS.ValueType.String);
   assert.equal(sheet.getCell('F3').value, null);
-  assert.equal(sheet.getCell('G2').value, 'Motor');
-  assert.equal(sheet.getCell('G3').value, null);
-  assert.equal(sheet.getCell('H3').value, 0);
+  assert.equal(sheet.getCell('H2').value, 'Motor');
+  assert.equal(sheet.getCell('H3').value, null);
+  assert.equal(sheet.getCell('I3').value, null);
+  assert.equal(sheet.getCell('J3').value, null);
+  assert.equal(sheet.getCell('K2').value, 12.34);
+  assert.equal(sheet.getCell('K3').value, null);
+  assert.equal(sheet.getCell('L3').value, 'Activo');
+  assert.equal(sheet.getCell('M3').value, 0);
   assert.equal(await (await a.get('/products')).text(), before);
+});
+
+test('Productos export shows Estado Archivado and carries no image column', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  assert.equal((await a.post('/products/2/archive', { csrfToken: a.csrfToken })).status, 303);
+  const html = await (await a.get('/products?state=all')).text();
+  const { sheet } = await download(await a.get(viewLink(html, 'Exportar')), 'productos.xlsx');
+  const estado = [...sheet.getRow(1).values].indexOf('Estado');
+  assert.ok(estado > 0);
+  assert.equal(sheet.getCell(2, estado).value, 'Activo');
+  assert.equal(sheet.getCell(3, estado).value, 'Archivado');
+  assert.equal([...sheet.getRow(1).values].some((header) => /imagen|foto/i.test(String(header))), false);
 });
 
 test('Inventario exports only P/N, name and quantity for active articles', async (t) => {
@@ -109,7 +130,7 @@ test('Inventario exports only P/N, name and quantity for active articles', async
   // Even a hand-crafted link asking for every state stays active-only.
   const { sheet } = await download(await a.get(link.replace('state=active', 'state=all')), 'inventario.xlsx');
   assert.equal(sheet.rowCount, 3);
-  assert.deepEqual(sheet.getRow(1).values.slice(1), ['P/N', 'Descripción', 'Cantidad']);
+  assert.deepEqual(sheet.getRow(1).values.slice(1), ['P/N', 'Producto', 'Cantidad']);
   assert.deepEqual(sheet.getRow(2).values.slice(1), ['00123', 'Junta <marina> & retén', 7]);
   assert.equal(sheet.getCell('A2').type, ExcelJS.ValueType.String);
   assert.deepEqual(sheet.getRow(3).values.slice(1), ['C-3', 'Juego completo', 4]);
@@ -184,14 +205,22 @@ test('an exported catalog can be reimported with categories and quantities, with
   assert.equal((await target.post('/imports/confirm', {
     csrfToken: target.csrfToken, confirmationToken: target.token(html, 'confirmationToken'),
   })).status, 303);
-  assert.match(await (await target.get('/products/1')).text(), /Categoría<\/dt><dd>Motor/);
-  assert.match(await (await target.get('/products/1')).text(), /Existencias<\/dt><dd>7/);
-  // Equivalent category names never duplicate the category.
+  const detail = await (await target.get('/products/1')).text();
+  assert.match(detail, /Categoría<\/dt><dd>Motor/);
+  assert.match(detail, /Existencias<\/dt><dd>7/);
+  assert.match(detail, /Junta con retén de repuesto/);
+  assert.match(detail, /Tipo de producto<\/dt><dd>Repuesto/);
+  assert.match(detail, /Proveedor<\/dt><dd>Marino S\.A\./);
+  assert.match(detail, /\$12\.34/);
+  // Equivalent category, type and supplier names never duplicate the named lists.
   assert.equal((await target.post('/products', {
-    csrfToken: target.csrfToken, partNumber: 'NUEVO', description: 'Otra junta', presentation: 'KIT', newCategory: 'motor',
+    csrfToken: target.csrfToken, partNumber: 'NUEVO', description: 'Otra junta', presentation: 'KIT',
+    newCategory: 'motor', newProductType: 'repuesto', newSupplier: 'marino s.a.',
   })).status, 303);
   const edit = await (await target.get('/products/1/edit')).text();
   assert.equal([...edit.matchAll(/>Motor<\/option>/g)].length, 1);
+  assert.equal([...edit.matchAll(/>Repuesto<\/option>/g)].length, 1);
+  assert.equal([...edit.matchAll(/>Marino S\.A\.<\/option>/g)].length, 1);
   // Reimporting the same workbook sets the same totals instead of doubling them.
   const repeat = await importCatalog(target, bytes, { view: 'products', stock: true, operation: 'set' });
   assert.equal(repeat.status, 200);
@@ -235,7 +264,9 @@ test('an empty inventory downloads a workbook with headers and no phantom articl
   assert.equal(sheet.getCell('C1').value, 'Cantidad');
   const products = await download(await a.get('/exports?view=products&scope=all'), 'productos.xlsx');
   assert.equal(products.sheet.rowCount, 1);
-  assert.equal(products.sheet.getCell('G1').value, 'Categoría');
+  assert.equal(products.sheet.getCell('B1').value, 'Producto');
+  assert.equal(products.sheet.getCell('H1').value, 'Categoría');
+  assert.equal(products.sheet.getCell('M1').value, 'Cantidad');
   assert.equal((await a.get('/exports?view=inventory&scope=selected')).status, 400);
 });
 
