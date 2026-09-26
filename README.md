@@ -50,6 +50,10 @@ La vista inicial es **Todos**, sin vistas personalizadas. Los filtros se aplican
 
 Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** de la barra de filtros muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
 
+## Imágenes de los productos
+
+Cada producto puede tener una imagen (JPG, PNG o WEBP, hasta 2 MB) que se sube, cambia o quita desde la ficha. La imagen se sirve por una ruta propia de la aplicación (`/products/<id>/image`) y se muestra como miniatura junto al nombre en las tablas de Productos, Inventario y listas de compra; un producto sin imagen se muestra sin hueco. Las imágenes se guardan en `data/images/` (configurable con `IMAGES_DIRECTORY`) y las copias de seguridad las incluyen junto a la base de datos: al restaurar una copia se reponen las imágenes de ese momento, conservando la copia previa del estado anterior.
+
 ## Existencias e historial
 
 Desde la tabla o la ficha del artículo, abre **Ajustar existencias**:

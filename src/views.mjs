@@ -19,6 +19,13 @@ function stockBadge(status) {
     : status === 'stockbajo' ? '<span class="badge badge-low">Stock bajo</span>' : '';
 }
 
+// A product with no image renders nothing, so the row never shows a broken placeholder.
+function productThumb(product) {
+  return product.image_filename
+    ? `<img class="product-thumb" src="/products/${product.id}/image" alt="" loading="lazy" width="34" height="34">`
+    : '';
+}
+
 function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
   const navigation = username ? `
     <header class="topbar">
@@ -147,7 +154,7 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
     const status = stockStatus(product);
     return `<tr>
       <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
-      <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
+      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
       ${inventory ? '' : `<td><span class="status-tag">${product.archived ? 'Archivado' : 'Activo'}</span></td>`}
       <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
@@ -336,8 +343,8 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
     const badge = status ? ` ${stockBadge(status)}` : '';
     return `<tr>
       <td class="part-number">${escapeHtml(line.part_number)}</td>
-      <td><a class="product-description" href="/products/${line.id}">${escapeHtml(line.description)}</a>
-        ${line.archived ? '<span class="status-tag">Archivado</span>' : ''}</td>
+      <td><span class="product-cell">${productThumb(line)}<a class="product-description" href="/products/${line.id}">${escapeHtml(line.description)}</a>
+        ${line.archived ? '<span class="status-tag">Archivado</span>' : ''}</span></td>
       <td class="quantity-cell">${line.quantity}${badge}</td>
       ${editable ? `<td><input class="line-quantity" type="number" min="1" step="1" inputmode="numeric"
           name="line-${line.line_id}" value="${escapeHtml(quantity)}" aria-label="Cantidad solicitada de ${escapeHtml(line.part_number)}"></td>
@@ -407,7 +414,7 @@ export function purchaseSelectionPage({ products = [], orders = [], confirmation
     const status = stockStatus(product);
     return `<tr>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
-      <td><a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></td>
+      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
       <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
     </tr>`;
   }).join('');
@@ -446,7 +453,8 @@ export function productDetailPage({ product, ...session }) {
   return page(product.description, `<div class="breadcrumb"><a href="/products">Productos</a><span>/</span><span>Ficha del producto</span></div>
     <div class="page-heading"><h1>${escapeHtml(product.description)}</h1>
       ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/edit">Editar producto</a>` : ''}</div>
-    <section class="product-form form-section"><h2>${escapeHtml(product.part_number)}</h2>
+    <section class="product-form form-section">${product.image_filename ? `<img class="product-image" src="/products/${product.id}/image" alt="Imagen de ${escapeHtml(product.description)}">` : ''}
+      <h2>${escapeHtml(product.part_number)}</h2>
       <dl class="product-details">
         <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
         <dt>Existencias</dt><dd>${product.quantity}</dd>
@@ -526,7 +534,7 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
       ${!isNew ? `<div>Existencias: <strong>${product.quantity}</strong> · ${!product.archived ? `<a href="/products/${product.id}/stock">Ajustar existencias</a> · ` : ''}<a href="/products/${product.id}/history">Historial</a></div>` : ''}
     </div>
-    <form class="product-form" method="post" action="${action}">
+    <form class="product-form" method="post" action="${action}" enctype="multipart/form-data">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
       <section class="form-section">
@@ -556,6 +564,18 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
             <p class="form-hint">Dólares con dos decimales.</p>
           </div>
         </div>
+      </section>
+      <section class="form-section">
+        <h2>Imagen</h2>
+        <p class="form-hint">Una imagen por producto: JPG, PNG o WEBP de hasta 2 MB. Puedes cambiarla o quitarla.</p>
+        ${product.image_filename ? `<div class="current-image">
+          <img class="product-image-preview" src="/products/${product.id}/image" alt="Imagen actual de ${escapeHtml(product.description ?? '')}">
+          <label class="filter-check"><input type="checkbox" name="removeImage"> Quitar la imagen actual</label>
+        </div>` : ''}
+        <div class="form-grid"><div class="field field-wide">
+          <label for="image">${product.image_filename ? 'Cambiar imagen' : 'Añadir imagen'} <span class="optional-mark">Opcional</span></label>
+          <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
+        </div></div>
       </section>
       <section class="form-section">
         <h2>Clasificación</h2>
@@ -777,7 +797,8 @@ function backupCounts(backup) {
   const articles = backup.products ?? 0;
   const movements = backup.movements ?? 0;
   const purchases = backup.purchaseOrders ?? 0;
-  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías · ${purchases} ${purchases === 1 ? 'lista de compra' : 'listas de compra'}`;
+  const images = backup.images ?? 0;
+  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías · ${purchases} ${purchases === 1 ? 'lista de compra' : 'listas de compra'} · ${images} ${images === 1 ? 'imagen' : 'imágenes'}`;
 }
 
 export function backupsPage({ backups, lastRestore = null, error = '', message = '', ...session }) {

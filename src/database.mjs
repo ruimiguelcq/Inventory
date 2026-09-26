@@ -87,6 +87,10 @@ export function openDatabase(databasePath) {
   if (!productColumns().includes('supplier_id')) {
     database.exec('ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)');
   }
+  // The image lives as a file; the row only remembers its generated name.
+  if (!productColumns().includes('image_filename')) {
+    database.exec('ALTER TABLE products ADD COLUMN image_filename TEXT');
+  }
   database.exec(`
     CREATE TABLE IF NOT EXISTS stock_movements (${STOCK_MOVEMENT_COLUMNS}
     );
@@ -274,6 +278,12 @@ export function setProductArchived(database, id, archived) {
   return database.prepare(`
     UPDATE products SET archived = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
   `).run(archived ? 1 : 0, id);
+}
+
+export function setProductImage(database, id, filename) {
+  return database.prepare(`
+    UPDATE products SET image_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(filename, id);
 }
 
 export function insertPurchaseOrder(database) {

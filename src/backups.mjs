@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { countImages } from './images.mjs';
 
 export const DEFAULT_BACKUP_RETENTION = 10;
 export const DEFAULT_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -27,6 +28,11 @@ function sqlLiteral(value) {
 
 function timestamp(date) {
   return date.toISOString().replace(/[:.]/g, '-');
+}
+
+// The images that belong to a snapshot live in a sibling folder named after the database file.
+function backupImagesPath(backupFilePath) {
+  return `${backupFilePath}.images`;
 }
 
 function backupFiles(directory) {
@@ -60,6 +66,12 @@ function inspectCounts(database) {
   };
 }
 
+// Replaces the destination folder so a snapshot never keeps stale image files.
+function replaceDirectory(source, destination) {
+  rmSync(destination, { recursive: true, force: true });
+  if (source && existsSync(source)) cpSync(source, destination, { recursive: true });
+}
+
 // Opens a candidate backup read-only and reports whether it is a sound snapshot.
 export function inspectBackup(path) {
   const stats = statSync(path);
@@ -69,9 +81,9 @@ export function inspectBackup(path) {
     database = new DatabaseSync(path, { readOnly: true });
     const integrity = database.prepare('PRAGMA integrity_check').get().integrity_check;
     const counts = inspectCounts(database);
-    return { ...info, valid: integrity === 'ok', integrity, ...counts };
+    return { ...info, valid: integrity === 'ok', integrity, ...counts, images: countImages(backupImagesPath(path)) };
   } catch {
-    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null };
+    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null, images: 0 };
   } finally {
     database?.close();
   }
@@ -88,14 +100,19 @@ export function findBackup(directory, file) {
 }
 
 function pruneBackups(directory, retention) {
-  for (const entry of backupFiles(directory).slice(Math.max(retention, 1))) unlinkSync(entry.path);
+  for (const entry of backupFiles(directory).slice(Math.max(retention, 1))) {
+    unlinkSync(entry.path);
+    rmSync(backupImagesPath(entry.path), { recursive: true, force: true });
+  }
 }
 
-export function createBackup(database, directory, { now = new Date(), retention = DEFAULT_BACKUP_RETENTION } = {}) {
+export function createBackup(database, directory, { now = new Date(), retention = DEFAULT_BACKUP_RETENTION, imageDirectory = null } = {}) {
   mkdirSync(directory, { recursive: true });
   const file = join(directory, `${FILE_PREFIX}${timestamp(now)}-${randomBytes(4).toString('hex')}${FILE_SUFFIX}`);
   // VACUUM INTO writes a consistent, compact snapshot without blocking the live connection.
   database.exec(`VACUUM INTO ${sqlLiteral(file)}`);
+  // The product images travel next to their database snapshot.
+  replaceDirectory(imageDirectory, backupImagesPath(file));
   pruneBackups(directory, retention);
   return inspectBackup(file);
 }
@@ -105,15 +122,16 @@ export function summarizeDatabase(database) {
   return { integrity, ...inspectCounts(database) };
 }
 
-// Copy the snapshot aside before anything can prune it, so the chosen source survives.
+// Copy the snapshot and its images aside before anything can prune them, so the chosen source survives.
 export function stageBackup(databasePath, backupPath) {
   const stagedPath = `${databasePath}.restoring`;
   copyFileSync(backupPath, stagedPath);
+  replaceDirectory(backupImagesPath(backupPath), backupImagesPath(stagedPath));
   return stagedPath;
 }
 
 // The caller closes the live database first so the staged file can take its place.
-export function installStagedDatabase(databasePath, stagedPath) {
+export function installStagedDatabase(databasePath, stagedPath, imageDirectory = null) {
   for (const suffix of ['-wal', '-shm']) {
     try {
       unlinkSync(`${databasePath}${suffix}`);
@@ -121,9 +139,10 @@ export function installStagedDatabase(databasePath, stagedPath) {
       // The database uses the default rollback journal, so these rarely exist.
     }
   }
+  if (imageDirectory) replaceDirectory(backupImagesPath(stagedPath), imageDirectory);
   renameSync(stagedPath, databasePath);
 }
 
-export function replaceDatabaseFile(databasePath, backupPath) {
-  installStagedDatabase(databasePath, stageBackup(databasePath, backupPath));
+export function replaceDatabaseFile(databasePath, backupPath, imageDirectory = null) {
+  installStagedDatabase(databasePath, stageBackup(databasePath, backupPath), imageDirectory);
 }

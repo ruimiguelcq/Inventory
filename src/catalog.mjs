@@ -1,4 +1,5 @@
-import { findOrCreateNamed, findUser, insertProduct, setProductClassification, updateProduct, setProductArchived } from './database.mjs';
+import { findOrCreateNamed, findUser, insertProduct, setProductClassification, setProductImage, updateProduct, setProductArchived } from './database.mjs';
+import { removeProductImage, storeProductImage } from './images.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock } from './stock.mjs';
 
@@ -54,9 +55,10 @@ function resolveNamedList(database, { table, tooLongMessage, conflictMessage, in
   return null;
 }
 
-// Named-list creation, classification and the initial movement commit together with the article.
-export function saveCatalogProduct(database, userId, product, form, existingProduct) {
+// Named-list creation, classification, the image and the initial movement commit together with the article.
+export function saveCatalogProduct(database, userId, product, form, existingProduct, { image = null, removeImage = false, imageDirectory = null } = {}) {
   database.exec('BEGIN IMMEDIATE');
+  let writtenImage = null;
   try {
     requireManager(database, userId);
     const categoryId = resolveNamedList(database, NAMED_LISTS.category, form.get('categoryId'), form.get('newCategory'), existingProduct?.category_id);
@@ -70,13 +72,23 @@ export function saveCatalogProduct(database, userId, product, form, existingProd
       priceCents: product.priceProvided ? product.priceCents : (existingProduct?.price_cents ?? null),
       categoryId, productTypeId, supplierId,
     });
+    const previousImage = existingProduct?.image_filename ?? null;
+    if (image && imageDirectory) {
+      writtenImage = storeProductImage(imageDirectory, id, image);
+      setProductImage(database, id, writtenImage);
+    } else if (removeImage) {
+      setProductImage(database, id, null);
+    }
     if (!existingProduct && product.initialQuantity > 0) {
       recordStock(database, userId, { productId: id, operation: 'set', quantity: product.initialQuantity,
         previousQuantity: 0, newQuantity: product.initialQuantity, presentation: product.presentation, reason: null }, 'creation');
     }
     database.exec('COMMIT');
+    // Only drop the replaced file once the new state is committed.
+    if (previousImage && (image || removeImage)) removeProductImage(imageDirectory, previousImage);
   } catch (error) {
     database.exec('ROLLBACK');
+    if (writtenImage) removeProductImage(imageDirectory, writtenImage);
     throw error;
   }
 }

@@ -217,6 +217,32 @@ tbody tr:hover { background: #f7fbfa; }
 .part-number a { color: #245d68; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .product-description { color: var(--ink); font-weight: 600; text-decoration: none; }
 .product-description:hover { text-decoration: underline; }
+.product-cell { display: inline-flex; align-items: center; gap: 10px; }
+.product-thumb {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.product-image {
+  display: block;
+  max-width: 320px;
+  max-height: 320px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.current-image { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.product-image-preview {
+  display: block;
+  max-width: 180px;
+  max-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
 .presentation-tag {
   display: inline-flex;
   min-height: 23px;

@@ -45,6 +45,13 @@ import {
   DEFAULT_BACKUP_INTERVAL_MS,
   DEFAULT_BACKUP_RETENTION,
 } from './backups.mjs';
+import {
+  countImages,
+  imageDirectoryFor,
+  MAX_IMAGE_BYTES,
+  readImageUpload,
+  readProductImage,
+} from './images.mjs';
 
 const scrypt = promisify(scryptCallback);
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
@@ -68,6 +75,25 @@ async function readForm(request, maxLength = 16_384) {
     if (body.length > maxLength) throw new Error('El formulario supera el tamaño permitido.');
   }
   return new URLSearchParams(body);
+}
+
+// The product form can carry a file, so a multipart body is parsed as FormData; plain forms keep working.
+async function readProductForm(request) {
+  const contentType = request.headers['content-type'] ?? '';
+  if (!contentType.startsWith('multipart/form-data')) return readForm(request);
+  const maxLength = MAX_IMAGE_BYTES + 256 * 1024;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxLength) throw new Error('La imagen supera el límite de 2 MB.');
+    chunks.push(chunk);
+  }
+  try {
+    return await new Response(Buffer.concat(chunks), { headers: { 'content-type': contentType } }).formData();
+  } catch {
+    throw new Error('No se pudo leer el formulario. Inténtalo de nuevo.');
+  }
 }
 
 function sendHtml(response, html, status = 200, headers = {}) {
@@ -127,12 +153,12 @@ function isUniqueViolation(error) {
   return error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: products\.part_number/i.test(error.message);
 }
 
-function saveProduct(database, response, { form, session, product, isNew, existingProduct }) {
+function saveProduct(database, response, { form, session, product, isNew, existingProduct, image = null, removeImage = false, imageDirectory }) {
   // A role may change while the request body is arriving. Check again at the write boundary.
   const user = findUser(database, session.userId);
   if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
   try {
-    saveCatalogProduct(database, session.userId, product, form, existingProduct);
+    saveCatalogProduct(database, session.userId, product, form, existingProduct, { image, removeImage, imageDirectory });
   } catch (error) {
     if (error instanceof CatalogError) {
       return sendProductFormError(response, form, session, error.message, { isNew, previousProduct: existingProduct, status: error.status, ...productFormOptions(database) });
@@ -230,6 +256,7 @@ function inventoryFilters(params) {
 export function createInventoryServer({
   databasePath = process.env.DATABASE_PATH ?? 'data/inventory.sqlite',
   backupDirectory = backupDirectoryFor(databasePath),
+  imageDirectory = imageDirectoryFor(databasePath),
   backupIntervalMs = Number(process.env.BACKUP_INTERVAL_MS) || DEFAULT_BACKUP_INTERVAL_MS,
   backupRetention = Number(process.env.BACKUP_RETENTION) || DEFAULT_BACKUP_RETENTION,
   automaticBackups = true,
@@ -254,7 +281,7 @@ export function createInventoryServer({
 
   function runAutomaticBackup() {
     try {
-      createBackup(database, backupDirectory, { retention: backupRetention });
+      createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
     } catch (error) {
       // A failed snapshot must never take the inventory down.
       console.error('No se pudo crear la copia de seguridad automática:', error.message);
@@ -348,6 +375,20 @@ export function createInventoryServer({
         return redirect(response, hasAdministrator(database) ? '/login' : '/setup');
       }
 
+      // Product images are private to the session but readable by every authenticated role.
+      const imageMatch = url.pathname.match(/^\/products\/(\d+)\/image$/);
+      if (request.method === 'GET' && imageMatch) {
+        const product = findProduct(database, Number(imageMatch[1]));
+        const image = product ? readProductImage(imageDirectory, product.image_filename) : null;
+        if (!image) return sendHtml(response, notFoundPage(session), 404);
+        response.writeHead(200, {
+          'content-type': image.mimeType,
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        });
+        return response.end(image.bytes);
+      }
+
       // Export is read-only for every authenticated role; POST keeps large selections out of the URL.
       if (['GET', 'POST'].includes(request.method) && url.pathname === '/exports') {
         const params = request.method === 'POST' ? await readForm(request, 2 * 1024 * 1024) : url.searchParams;
@@ -432,7 +473,7 @@ export function createInventoryServer({
           if (request.method === 'POST' && url.pathname === '/backups') {
             const form = await readForm(request);
             if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
-            createBackup(database, backupDirectory, { retention: backupRetention });
+            createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
             return redirect(response, '/backups?created=1');
           }
           if (url.pathname === '/backups/restore' && request.method === 'GET') {
@@ -452,22 +493,24 @@ export function createInventoryServer({
             delete storedSession.backupRestore;
             // Stage the chosen snapshot first: creating the safety copy prunes older files.
             const staged = stageBackup(databasePath, backup.path);
-            const safetyBackup = createBackup(database, backupDirectory, { retention: backupRetention });
+            const safetyBackup = createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
             database.close();
             try {
-              installStagedDatabase(databasePath, staged);
+              installStagedDatabase(databasePath, staged, imageDirectory);
               database = openDatabase(databasePath);
               const summary = summarizeDatabase(database);
+              summary.images = countImages(imageDirectory);
               if (summary.integrity !== 'ok' || summary.products !== backup.products
                 || summary.movements !== backup.movements || summary.users !== backup.users || summary.categories !== backup.categories
-                || summary.purchaseOrders !== backup.purchaseOrders || summary.purchaseOrderLines !== backup.purchaseOrderLines) {
+                || summary.purchaseOrders !== backup.purchaseOrders || summary.purchaseOrderLines !== backup.purchaseOrderLines
+                || summary.images !== backup.images) {
                 throw new BackupError('La restauración no coincide con la copia verificada.', 500);
               }
               lastRestore = { backup: backup.file, safety: safetyBackup.file, restoredAt: new Date().toISOString(), ...summary };
             } catch (error) {
               // Any failure after the swap rolls back to the snapshot taken moments ago.
               if (database.isOpen) database.close();
-              replaceDatabaseFile(databasePath, safetyBackup.path);
+              replaceDatabaseFile(databasePath, safetyBackup.path, imageDirectory);
               database = openDatabase(databasePath);
               if (error instanceof BackupError) throw error;
               throw new BackupError('No se pudo completar la restauración; se recuperó el estado anterior.', 500);
@@ -752,11 +795,16 @@ export function createInventoryServer({
       }
 
       if (request.method === 'POST' && url.pathname === '/products') {
-        const form = await readForm(request);
+        const form = await readProductForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const { error, product } = validateProduct(form);
         if (error) return sendProductFormError(response, form, session, error, productFormOptions(database));
-        return saveProduct(database, response, { form, session, product, isNew: true });
+        const upload = await readImageUpload(form.get('image'));
+        if (upload.error) return sendProductFormError(response, form, session, upload.error, productFormOptions(database));
+        return saveProduct(database, response, {
+          form, session, product, isNew: true, image: upload.image,
+          removeImage: form.get('removeImage') === 'on', imageDirectory,
+        });
       }
 
       if (request.method === 'POST' && ['/products/archive', '/products/restore'].includes(url.pathname)) {
@@ -802,19 +850,25 @@ export function createInventoryServer({
         return sendHtml(response, productDetailPage({ ...session, product }));
       }
       if (request.method === 'POST' && updateMatch) {
-        const form = await readForm(request);
+        const form = await readProductForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const id = Number(updateMatch[1]);
         const existingProduct = findProduct(database, id);
         if (!existingProduct) return sendHtml(response, notFoundPage(session), 404);
         const { error, product } = validateProduct(form);
         if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct, ...productFormOptions(database) });
-        return saveProduct(database, response, { form, session, product, isNew: false, existingProduct });
+        const upload = await readImageUpload(form.get('image'));
+        if (upload.error) return sendProductFormError(response, form, session, upload.error, { isNew: false, previousProduct: existingProduct, ...productFormOptions(database) });
+        return saveProduct(database, response, {
+          form, session, product, isNew: false, existingProduct, image: upload.image,
+          removeImage: form.get('removeImage') === 'on', imageDirectory,
+        });
       }
 
       return sendHtml(response, notFoundPage(session), 404);
     } catch (error) {
-      const message = error.message === 'El formulario supera el tamaño permitido.' ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
+      const allowed = ['El formulario supera el tamaño permitido.', 'La imagen supera el límite de 2 MB.', 'No se pudo leer el formulario. Inténtalo de nuevo.'];
+      const message = allowed.includes(error.message) ? error.message : 'No se pudo completar la operación. Revisa los datos e inténtalo de nuevo.';
       sendHtml(response, session ? productsPage({ ...session, ...catalogOptions(url.searchParams), message }) : loginPage({ error: message }), 400);
     }
   });
