@@ -1,4 +1,9 @@
 export const PRESENTATIONS = ['SET', 'KIT', 'unidad'];
+// Units are stored as 'unidad' but shown as EA everywhere in the interface.
+export const PRESENTATION_LABELS = { SET: 'SET', KIT: 'KIT', unidad: 'EA' };
+export function presentationLabel(presentation) {
+  return PRESENTATION_LABELS[presentation] ?? presentation;
+}
 export const MAX_LONG_DESCRIPTION = 2000;
 // The catalog colours the inventory cell against the product minimum, falling back to ten.
 export const DEFAULT_MINIMUM_STOCK = 10;
@@ -62,7 +67,7 @@ export function validateProduct(form) {
   return { product };
 }
 
-// Cero existencias tiene prioridad y se marca "agotado"; con mínimo configurado, cantidad menor o igual al mínimo es "stock bajo".
+// Inventario en cero tiene prioridad y se marca "agotado"; con mínimo configurado, cantidad menor o igual al mínimo es "stock bajo".
 export function stockStatus(product) {
   if (product.quantity === 0) return 'agotado';
   if (product.minimum_stock !== null && product.minimum_stock !== undefined && product.quantity <= product.minimum_stock) return 'stockbajo';

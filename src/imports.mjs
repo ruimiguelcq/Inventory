@@ -98,7 +98,7 @@ async function readSpreadsheet(file) {
   return { sheet, mapping };
 }
 
-// Productos importa catálogo/categoría y, opcionalmente, existencias en el mismo lote.
+// Productos importa catálogo/categoría y, opcionalmente, inventario en el mismo lote.
 // Inventario solo actualiza cantidades de artículos que ya existen.
 export async function previewImport(database, form, view) {
   if (!VIEWS.includes(view)) throw new ImportError('Elige una vista válida para importar.');
@@ -110,7 +110,7 @@ export async function previewImport(database, form, view) {
   const required = ['partNumber', ...(descriptions ? ['description', 'presentation'] : []), ...(stock ? ['quantity'] : [])];
   if (required.some((field) => !mapping.has(field))) {
     throw new ImportError(descriptions
-      ? 'Faltan columnas obligatorias: P/N, Producto (o Descripción) y Presentación, y Cantidad si importas existencias.'
+      ? 'Faltan columnas obligatorias: P/N, Producto (o Descripción) y Presentación, y Cantidad si importas inventario.'
       : 'Faltan columnas obligatorias para Inventario: P/N y Cantidad.');
   }
   const rows = [];
@@ -201,7 +201,7 @@ export function applyImport(database, userId, review) {
     if (review.rows.some((row) => row.errors.length)) throw new ImportError('Corrige todas las filas con errores antes de confirmar.');
     for (const row of review.rows) {
       const current = findProductByPartNumber(database, row.partNumber) ?? null;
-      if (JSON.stringify(current) !== JSON.stringify(row.previous)) throw new ImportError('Los artículos o las existencias han cambiado. Revisa de nuevo el archivo.', 409);
+      if (JSON.stringify(current) !== JSON.stringify(row.previous)) throw new ImportError('Los artículos o el inventario han cambiado. Revisa de nuevo el archivo.', 409);
     }
     for (const row of review.rows) {
       let id = row.previous?.id;

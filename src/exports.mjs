@@ -5,7 +5,7 @@ export class ExportError extends Error {}
 
 export const EXPORT_VIEWS = ['products', 'inventory'];
 
-// Productos exporta el catálogo descriptivo con su categoría; Inventario solo P/N, nombre y existencias.
+// Productos exporta el catálogo descriptivo con su categoría; Inventario solo P/N, nombre e inventario.
 export function parseExportView(params) {
   const view = params.get('view') ?? 'inventory';
   if (!EXPORT_VIEWS.includes(view)) throw new ExportError('Elige una vista válida para exportar.');

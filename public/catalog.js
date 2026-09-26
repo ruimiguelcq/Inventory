@@ -1,5 +1,5 @@
 // Inline stock editing: the Disponible number opens a small editor in place. Without JavaScript the
-// number remains a link to the full Ajustar existencias page. Events are delegated so the editor
+// number remains a link to the full Ajustar inventario page. Events are delegated so the editor
 // keeps working after an instant-search swap replaces the results.
 const closeEditor = (form) => {
   form.hidden = true;

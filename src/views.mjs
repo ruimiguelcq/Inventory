@@ -1,7 +1,7 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
-import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, stockStatus } from './products.mjs';
+import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
 
-const PRESENTATIONS = presentationValues.map((value) => [value, value]);
+const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
 export function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -146,7 +146,7 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
     const level = `quantity-cell inventory-${inventoryLevel(product)}`;
     if (!canManage) return `<td class="${level}">${product.quantity}</td>`;
     return `<td class="${level}" data-stock-cell>
-        <a class="stock-value" href="/products/${product.id}/stock" data-stock-open aria-label="Ajustar existencias de ${escapeHtml(product.part_number)}">${product.quantity}</a>
+        <a class="stock-value" href="/products/${product.id}/stock" data-stock-open aria-label="Ajustar inventario de ${escapeHtml(product.part_number)}">${product.quantity}</a>
         <form class="stock-editor" method="post" action="/products/${product.id}/stock/apply" data-stock-form hidden>
           <input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">
           <input type="hidden" name="q" value="${escapeHtml(filters.q ?? '')}">
@@ -307,7 +307,7 @@ export function purchaseOrdersPage({ orders = [], error = '', ...session }) {
   const content = `
     <div class="page-heading">
       <div><p class="eyebrow">Compras</p><h1>Órdenes de compra</h1>
-        <p class="page-subtitle">Prepara los repuestos a pedir. Guardar un borrador no cambia las existencias ni crea movimientos.</p></div>
+        <p class="page-subtitle">Prepara los repuestos a pedir. Guardar un borrador no cambia el inventario ni crea movimientos.</p></div>
       ${canManage ? createForm : ''}
     </div>
     ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
@@ -423,13 +423,13 @@ export function productDetailPage({ product, ...session }) {
         <dt>Categoría</dt><dd>${escapeHtml(product.category_name ?? 'Sin categoría')}</dd>
         <dt>Tipo de producto</dt><dd>${escapeHtml(product.product_type_name ?? '—')}</dd>
         <dt>Proveedor</dt><dd>${escapeHtml(product.supplier_name ?? '—')}</dd>
-        <dt>Presentación</dt><dd>${escapeHtml(product.presentation)}</dd>
+        <dt>Presentación</dt><dd>${escapeHtml(presentationLabel(product.presentation))}</dd>
         <dt>Marca</dt><dd>${escapeHtml(product.brand || '—')}</dd>
         <dt>Ubicación</dt><dd>${escapeHtml(product.location || '—')}</dd>
         <dt>Mínimo de stock</dt><dd>${product.minimum_stock ?? '—'}</dd>
       </dl>
       <a class="button button-secondary" href="/products/${product.id}/history">Historial</a>
-      ${canManageInventory(session.role) && !product.archived ? `<a class="button button-secondary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}
+      ${canManageInventory(session.role) && !product.archived ? `<a class="button button-secondary" href="/products/${product.id}/stock">Ajustar inventario</a>` : ''}
       ${canManageInventory(session.role) ? `<form class="inline-form" method="post" action="/products/${product.id}/${product.archived ? 'restore' : 'archive'}">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
         <button class="button button-secondary" type="submit">${product.archived ? 'Desarchivar' : 'Archivar'}</button>
@@ -444,7 +444,7 @@ function roleOptions(selectedRole = 'viewer') {
 export function accountsPage({ users, account = {}, error = '', ...session }) {
   return page('Cuentas y permisos', `
     <div class="page-heading"><div><p class="eyebrow">Equipo</p><h1>Cuentas y permisos</h1>
-      <p class="page-subtitle">Consulta permite ver el inventario. Gestión permite mantener artículos y existencias.</p></div></div>
+      <p class="page-subtitle">Consulta permite ver el inventario. Gestión permite mantener artículos e inventario.</p></div></div>
     <section class="inventory-panel" aria-label="Cuentas del equipo">
       <table><thead><tr><th scope="col">Usuario</th><th scope="col">Permiso</th></tr></thead>
         <tbody>${users.map((user) => `<tr><td>${escapeHtml(user.username)}</td><td>${user.role === 'admin' ? 'Administración' : `
@@ -605,7 +605,7 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
             </div>
             ${isNew
               ? '<p class="form-hint">Se registra en el historial como movimiento de alta.</p>'
-              : `<p class="form-hint"><a href="/products/${product.id}/stock">Ajustar existencias</a>; cada cambio queda en el historial.</p>`}
+              : `<p class="form-hint"><a href="/products/${product.id}/stock">Ajustar inventario</a>; cada cambio queda en el historial.</p>`}
             <div class="field">
               <label for="location">Ubicación principal <span class="optional-mark">Opcional</span></label>
               <input id="location" name="location" value="${escapeHtml(product.location ?? '')}" maxlength="120" placeholder="Estante, caja u otra referencia interna">
@@ -648,27 +648,27 @@ export function renderPresentations() {
 }
 
 export function stockPage({ product, change, confirmationToken, values = {}, error = '', ...session }) {
-  return page('Ajustar existencias', `
+  return page('Ajustar inventario', `
     <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><a href="/products/${product.id}/history">Historial</a></div>
-    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)} · ${escapeHtml(product.presentation)}</p>
-      <h1>${change ? 'Revisar cambio' : 'Ajustar existencias'}</h1><p>${escapeHtml(product.description)}</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)} · ${escapeHtml(presentationLabel(product.presentation))}</p>
+      <h1>${change ? 'Revisar cambio' : 'Ajustar inventario'}</h1><p>${escapeHtml(product.description)}</p></div></div>
     <form class="product-form" method="post" action="/products/${product.id}/stock${change ? '/confirm' : ''}">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
       <section class="form-section">
         ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
         ${change ? `
           <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
-          <h2>${change.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${change.quantity} ${escapeHtml(change.presentation)}</h2>
+          <h2>${change.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${change.quantity} ${escapeHtml(presentationLabel(change.presentation))}</h2>
           <p>Anterior: <strong>${change.previousQuantity}</strong> → Nueva: <strong>${change.newQuantity}</strong></p>
           <p>Motivo: ${escapeHtml(change.reason || 'Sin motivo')}</p>` : `
-          <p>Disponible: <strong>${product.quantity}</strong> ${escapeHtml(product.presentation)}</p>
+          <p>Disponible: <strong>${product.quantity}</strong> ${escapeHtml(presentationLabel(product.presentation))}</p>
           <p class="form-hint">Cuenta presentaciones vendibles completas; no componentes de SET o KIT.</p>
           <div class="form-grid">
             <div class="field"><label for="operation">Operación</label><select id="operation" name="operation" required>
               <option value="adjust" ${values.operation === 'adjust' ? 'selected' : ''}>Ajustar por — sumar o restar</option>
               <option value="set" ${values.operation === 'set' ? 'selected' : ''}>Establecer en — total exacto</option>
             </select></div>
-            <div class="field"><label for="quantity">Cantidad (${escapeHtml(product.presentation)})</label>
+            <div class="field"><label for="quantity">Cantidad (${escapeHtml(presentationLabel(product.presentation))})</label>
               <input id="quantity" name="quantity" type="number" step="1" value="${escapeHtml(values.quantity ?? '')}" required></div>
             <div class="field field-wide"><label for="reason">Motivo (opcional)</label>
               <input id="reason" name="reason" maxlength="500" value="${escapeHtml(values.reason ?? '')}"></div>
@@ -680,19 +680,19 @@ export function stockPage({ product, change, confirmationToken, values = {}, err
 }
 
 export function historyPage({ product, movements, ...session }) {
-  return page('Historial de existencias', `
+  return page('Historial de inventario', `
     <div class="breadcrumb"><a href="/inventory">Inventario</a><span>/</span><span>Historial</span></div>
-    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)}</p><h1>Historial de existencias</h1>
-      <p>${escapeHtml(product.description)} · Disponible: <strong>${product.quantity}</strong> ${escapeHtml(product.presentation)}</p></div>
-      ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/stock">Ajustar existencias</a>` : ''}</div>
-    <section class="inventory-panel" aria-label="Movimientos de existencias">
+    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(product.part_number)}</p><h1>Historial de inventario</h1>
+      <p>${escapeHtml(product.description)} · Disponible: <strong>${product.quantity}</strong> ${escapeHtml(presentationLabel(product.presentation))}</p></div>
+      ${canManageInventory(session.role) ? `<a class="button button-primary" href="/products/${product.id}/stock">Ajustar inventario</a>` : ''}</div>
+    <section class="inventory-panel" aria-label="Movimientos de inventario">
       ${movements.length ? `<div class="table-scroll"><table><thead><tr>
         <th>Fecha/hora (UTC)</th><th>Usuario</th><th>Operación</th><th>Cantidad</th><th>Anterior</th><th>Nueva</th><th>Presentación</th><th>Motivo</th><th>Origen</th>
       </tr></thead><tbody>${movements.map((movement) => `<tr>
         <td><time datetime="${escapeHtml(movement.created_at)}">${escapeHtml(movement.created_at.replace('T', ' ').replace('Z', ' UTC'))}</time></td>
         <td>${escapeHtml(movement.username)}</td><td>${movement.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'}</td>
         <td>${movement.quantity}</td><td>${movement.previous_quantity}</td><td>${movement.new_quantity}</td>
-         <td>${escapeHtml(movement.presentation)}</td><td>${escapeHtml(movement.reason || '—')}</td>
+         <td>${escapeHtml(presentationLabel(movement.presentation))}</td><td>${escapeHtml(movement.reason || '—')}</td>
          <td>${movement.source === 'creation' ? 'Alta' : movement.source === 'import' ? 'Importación Excel' : 'Manual'}</td>
       </tr>`).join('')}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay movimientos.</p></div>'}
     </section>`, session);
@@ -703,7 +703,7 @@ function importDetails(product, names = {}) {
   const longDescription = product.long_description ?? product.longDescription ?? '';
   const priceCents = product.price_cents ?? product.priceCents ?? null;
   const minimum = product.minimum_stock ?? product.minimumStock;
-  return `${escapeHtml(product.description)} · ${escapeHtml(product.presentation)}${longDescription ? `<br>${escapeHtml(longDescription)}` : ''}<br>
+  return `${escapeHtml(product.description)} · ${escapeHtml(presentationLabel(product.presentation))}${longDescription ? `<br>${escapeHtml(longDescription)}` : ''}<br>
     Marca: ${escapeHtml(product.brand || '—')} · Ubicación: ${escapeHtml(product.location || '—')} · Mínimo: ${escapeHtml(minimum ?? '—')} · Categoría: ${escapeHtml(names.category || 'Sin categoría')}
     · Tipo: ${escapeHtml(names.productType || '—')} · Proveedor: ${escapeHtml(names.supplier || '—')} · Precio: ${priceCents == null ? '—' : `$${formatCents(priceCents)}`}`;
 }
@@ -711,7 +711,7 @@ function importDetails(product, names = {}) {
 export function importPage({ review, confirmationToken, error = '', view = 'inventory', ...session }) {
   const inventory = view === 'inventory';
   const route = inventory ? '/inventory' : '/products';
-  const title = inventory ? 'Importar existencias' : 'Importar productos';
+  const title = inventory ? 'Importar inventario' : 'Importar productos';
   const invalid = review?.rows.filter((row) => row.errors.length).length ?? 0;
   return page(title, `
     <div class="breadcrumb"><a href="${route}">${inventory ? 'Inventario' : 'Productos'}</a><span>/</span><span>Importar Excel</span></div>
@@ -727,7 +727,7 @@ export function importPage({ review, confirmationToken, error = '', view = 'inve
             <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
             <td>${importDetails(row.previous, { category: row.previous?.category_name, productType: row.previous?.product_type_name, supplier: row.previous?.supplier_name })}</td>
             <td>${review.descriptions && row.product ? importDetails(row.product, { category: row.categoryName, productType: row.productTypeName, supplier: row.supplierName }) : (row.previous ? 'Sin cambios de catálogo' : '—')}</td>
-            <td>${row.change ? `${row.change.previousQuantity} → ${row.change.newQuantity} ${escapeHtml(row.change.presentation)}<br>${review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${row.change.quantity}` : 'Sin cambios'}</td>
+            <td>${row.change ? `${row.change.previousQuantity} → ${row.change.newQuantity} ${escapeHtml(presentationLabel(row.change.presentation))}<br>${review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'} ${row.change.quantity}` : 'Sin cambios'}</td>
             <td>${row.errors.map(escapeHtml).join('<br>')}</td></tr>`).join('')}</tbody>
         </table></div>
       </section>
@@ -750,17 +750,17 @@ export function importPage({ review, confirmationToken, error = '', view = 'inve
         <section class="form-section"><h2>Archivo y opciones</h2>
           <p>Excel .xlsx, una sola hoja, hasta 2 MB y 1000 filas. Primera fila: encabezados.</p>
           ${inventory ? `
-          <p>Columnas: <strong>P/N, Cantidad</strong>. La importación de Inventario solo actualiza las existencias de artículos que ya existen y rechaza los P/N desconocidos.</p>
+          <p>Columnas: <strong>P/N, Cantidad</strong>. La importación de Inventario solo actualiza el inventario de artículos que ya existen y rechaza los P/N desconocidos.</p>
           <p>Guarda P/N como texto para conservar ceros iniciales. Usa valores, sin fórmulas.</p>` : `
           <p>Columnas: <strong>P/N, Producto, Descripción, Presentación, Marca, Ubicación, Mínimo de stock, Categoría, Tipo, Proveedor, Precio, Estado</strong> y, opcionalmente, <strong>Cantidad</strong>.</p>
-          <p>Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad. Precio en dólares con hasta dos decimales. Usa valores, sin fórmulas.</p>
+          <p>Guarda P/N como texto para conservar ceros iniciales. Presentación: SET, KIT o unidad (EA en pantalla). Precio en dólares con hasta dos decimales. Usa valores, sin fórmulas.</p>
           <p>Se requieren P/N, Producto (o Descripción en archivos antiguos) y Presentación. «Producto» es el nombre y «Descripción» la descripción larga; si el archivo solo trae «Descripción», se usa como nombre.
             Las columnas opcionales ausentes se conservan; las celdas vacías las borran. Categoría, tipo y proveedor escritos se crean o reutilizan sin duplicar equivalentes.
             «Estado» es informativo: archivar y desarchivar se hace desde la ficha del producto. Las altas sin stock comienzan en cero.</p>`}
           <div class="field"><label for="file">Archivo Excel</label><input id="file" name="file" type="file" accept=".xlsx" required></div>
-          ${inventory ? '' : '<p><label><input type="checkbox" name="stock"> Importar existencias además del catálogo</label></p>'}
-          <div class="field"><label for="operation">Operación para existencias</label><select id="operation" name="operation" ${inventory ? 'required' : ''}>
-            <option value="">Selecciona si importas existencias</option>
+          ${inventory ? '' : '<p><label><input type="checkbox" name="stock"> Importar inventario además del catálogo</label></p>'}
+          <div class="field"><label for="operation">Operación para inventario</label><select id="operation" name="operation" ${inventory ? 'required' : ''}>
+            <option value="">Selecciona si importas inventario</option>
             <option value="adjust">Ajustar por — sumar o restar la cantidad importada</option>
             <option value="set">Establecer en — total exacto indicado</option>
           </select></div>
@@ -812,7 +812,7 @@ export function backupsPage({ backups, lastRestore = null, error = '', message =
   return page('Copias de seguridad', `
     <div class="page-heading">
       <div><p class="eyebrow">Administración</p><h1>Copias de seguridad</h1>
-        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve cuentas, artículos, categorías, existencias, historial y listas de compra.</p></div>
+        <p class="page-subtitle">Las copias se crean automáticamente. Restaurar una copia devuelve cuentas, artículos, categorías, inventario, historial y listas de compra.</p></div>
       <form method="post" action="/backups">
         <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
         <button class="button button-primary" type="submit">Crear copia ahora</button>

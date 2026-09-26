@@ -16,7 +16,7 @@ export function reviewStock(product, form) {
   if (!['adjust', 'set'].includes(operation)) throw new StockError('Elige Ajustar por o Establecer en.');
   if (!/^[+-]?\d+$/.test(input) || !Number.isSafeInteger(quantity)) throw new StockError('La cantidad debe ser un número entero de presentaciones completas.');
   const newQuantity = operation === 'adjust' ? product.quantity + quantity : quantity;
-  if (newQuantity < 0) throw new StockError('Las existencias no pueden quedar por debajo de cero.');
+  if (newQuantity < 0) throw new StockError('El inventario no puede quedar por debajo de cero.');
   if (!Number.isSafeInteger(newQuantity)) throw new StockError('La cantidad supera el máximo permitido.');
   if (reason.length > 500) throw new StockError('El motivo no puede superar los 500 caracteres.');
   return { productId: product.id, version: product.stock_version, presentation: product.presentation,
@@ -31,7 +31,7 @@ export function saveStock(database, userId, change) {
     }
     const product = findProduct(database, change.productId);
     if (!product || product.stock_version !== change.version || product.presentation !== change.presentation) {
-      throw new StockError('Las existencias o la presentación han cambiado. Revisa de nuevo la operación.', 409);
+      throw new StockError('El inventario o la presentación han cambiado. Revisa de nuevo la operación.', 409);
     }
     recordStock(database, userId, change);
     database.exec('COMMIT');

@@ -419,7 +419,7 @@ test('gestión can subtract complete presentations and set an exact total, while
   assert.match(history, /<td>8<\/td><td>3<\/td><td>8<\/td>/);
   assert.match(history, /<td>gestion<\/td>/);
   assert.match(history, /&lt;Entrega&gt;/);
-  assert.doesNotMatch(history, /Ajustar existencias|Confirmar cambio|Editar|Eliminar/);
+  assert.doesNotMatch(history, /Ajustar inventario|Confirmar cambio|Editar|Eliminar/);
   assert.equal((await fetch(`${baseUrl}/products/1/stock`, { headers: { cookie: viewer } })).status, 403);
   assert.equal((await postForm('/products/1/stock/confirm', { csrfToken: await getCsrfToken(viewer), confirmationToken: set.confirmationToken }, viewer)).status, 403);
   for (const path of ['/products/1/history', '/products/1/history/1', '/products/1/history/1/delete']) {

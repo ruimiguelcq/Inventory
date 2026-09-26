@@ -168,9 +168,9 @@ test('archiving requires gestión, a valid CSRF token and an existing article', 
   assert.equal((await a.post('/products/1/restore', { csrfToken: viewerToken })).status, 403);
 
   const viewerPage = await (await a.get('/products?archived=on')).text();
-  assert.doesNotMatch(viewerPage, /Archivar|Desarchivar|Ajustar existencias/);
+  assert.doesNotMatch(viewerPage, /Archivar|Desarchivar|Ajustar inventario/);
   const viewerActive = await (await a.get('/inventory')).text();
-  assert.doesNotMatch(viewerActive, /Archivar|Desarchivar|Ajustar existencias/);
+  assert.doesNotMatch(viewerActive, /Archivar|Desarchivar|Ajustar inventario/);
   assert.match(viewerActive, /JUNTA/);
 });
 
@@ -284,7 +284,7 @@ test('desktop sections, product details and management links respect every role 
     assert.match(html, /Existencias<\/dt><dd>0/);
     assert.match(html, /href="\/products\/1\/history"/);
     assert.equal(html.includes('Editar producto'), role !== 'viewer');
-    assert.equal(html.includes('Ajustar existencias'), role !== 'viewer');
+    assert.equal(html.includes('Ajustar inventario'), role !== 'viewer');
     assert.equal(html.includes('>Archivar</button>'), role !== 'viewer');
     assert.equal((await a.get('/products/9999')).status, 404);
     for (const path of ['/users', '/backups', '/products/1/edit', '/products/1/stock', '/imports']) {

@@ -8,7 +8,7 @@ Estado: Aceptado
 
 El ticket #1 difirió la estrategia concreta de copias de seguridad al momento de
 la implementación, con el requisito de no perder datos. La aplicación guarda
-todo su estado (cuentas, artículos, existencias e historial, incluidas las
+todo su estado (cuentas, artículos, inventario e historial, incluidas las
 imágenes de los productos) en una única base de datos SQLite,
 `data/inventory.sqlite`, más los archivos de imagen servidos por la aplicación,
 desde un solo ordenador.
