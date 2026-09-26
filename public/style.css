@@ -550,6 +550,50 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
 .inventory-card__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 13px; }
 .inventory-card__row input { width: 130px; min-height: 36px; padding: 7px 10px; border: 1px solid #bccbd2; border-radius: 6px; text-align: right; }
 .inventory-card__value { font-variant-numeric: tabular-nums; font-weight: 600; }
+.currency-input { display: flex; align-items: center; border: 1px solid #bccbd2; border-radius: 6px; background: #fff; }
+.currency-input:hover { border-color: #8499a4; }
+.product-form--split .currency-input input { min-height: 34px; border: 0; background: transparent; }
+.currency-input__symbol { padding: 0 11px; color: var(--muted); }
+.help-dot {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: help;
+  vertical-align: middle;
+}
+.price-extra { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.price-extra > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #303030;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.price-extra > summary::-webkit-details-marker { display: none; }
+.price-extra > summary::after { content: "\25BE"; color: var(--muted); transition: transform 0.15s ease; }
+.price-extra[open] > summary::after { transform: rotate(180deg); }
+.price-extra .form-grid { margin-top: 16px; }
+.profit-value {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 7px 11px;
+  border-radius: 6px;
+  background: #f4f8f8;
+  color: #1f6257;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .media-box { display: grid; gap: 12px; }
 .media-box__current { display: flex; flex-direction: column; gap: 10px; }
 .media-box__drop {

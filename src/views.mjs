@@ -413,7 +413,7 @@ export function productDetailPage({ product, ...session }) {
         <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
         <dt>Existencias</dt><dd>${product.quantity}</dd>
         <dt>Precio</dt><dd>${product.price_cents == null ? '—' : `$${formatCents(product.price_cents)}`}</dd>
-        <dt>Costo</dt><dd>${product.cost_cents == null ? '—' : `$${formatCents(product.cost_cents)}`}</dd>
+        <dt>Precio de fábrica</dt><dd>${product.cost_cents == null ? '—' : `$${formatCents(product.cost_cents)}`}</dd>
         ${product.price_cents != null && product.cost_cents != null ? `<dt>Ganancia</dt><dd>$${formatCents(product.price_cents - product.cost_cents)}</dd>` : ''}
         <dt>Descripción</dt><dd class="long-description">${product.long_description ? escapeHtml(product.long_description) : '—'}</dd>
         <dt>Categoría</dt><dd>${escapeHtml(product.category_name ?? 'Sin categoría')}</dd>
@@ -516,6 +516,7 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
   `;
   const priceValue = product.price ?? (product.price_cents != null ? formatCents(product.price_cents) : '');
   const costValue = product.cost ?? (product.cost_cents != null ? formatCents(product.cost_cents) : '');
+  const profitValue = product.price_cents != null && product.cost_cents != null ? `$${formatCents(product.price_cents - product.cost_cents)}` : '—';
   const action = isNew ? '/products' : `/products/${product.id}`;
   const title = isNew ? 'Añadir repuesto' : 'Editar repuesto';
   const content = `
@@ -562,19 +563,31 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
               <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp" class="media-box__input">
             </div>
           </section>
-          <section class="form-section form-card">
+          <section class="form-section form-card price-card">
             <h2>Precio</h2>
-            <div class="form-grid">
-              <div class="field">
-                <label for="price">Precio (USD) <span class="optional-mark">Opcional</span></label>
-                <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0.00">
-              </div>
-              <div class="field">
-                <label for="cost">Costo (USD) <span class="optional-mark">Opcional</span></label>
-                <input id="cost" name="cost" inputmode="decimal" value="${escapeHtml(costValue)}" placeholder="0.00">
+            <div class="field">
+              <label for="price">Precio</label>
+              <div class="currency-input">
+                <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0,00" data-price>
+                <span class="currency-input__symbol" aria-hidden="true">$</span>
               </div>
             </div>
-            <p class="form-hint">El costo es interno: solo lo ve el equipo, nunca el cliente. Junto al precio te dice la ganancia.</p>
+            <details class="price-extra" open>
+              <summary>Precios adicionales</summary>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cost">Precio de fábrica <span class="help-dot" title="Lo que nos cuesta el producto. Solo lo ve el equipo.">?</span></label>
+                  <div class="currency-input">
+                    <input id="cost" name="cost" inputmode="decimal" value="${escapeHtml(costValue)}" placeholder="0,00" data-cost>
+                    <span class="currency-input__symbol" aria-hidden="true">$</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="profit">Ganancia</label>
+                  <output id="profit" class="profit-value" for="price cost" data-profit>${profitValue}</output>
+                </div>
+              </div>
+            </details>
           </section>
           <section class="form-section form-card">
             <h2>Inventario</h2>

@@ -51,7 +51,7 @@ export function validateProduct(form) {
   if (price.error) return { error: price.error, product };
   product.priceCents = price.cents;
   const cost = parsePrice(costInput);
-  if (cost.error) return { error: cost.error.replace('El precio', 'El costo'), product };
+  if (cost.error) return { error: cost.error.replace('El precio', 'El precio de fábrica'), product };
   product.costCents = cost.cents;
   if (stateInput !== null && stateInput !== '' && !['active', 'archived'].includes(stateInput)) {
     return { error: 'Elige un estado válido: Activo o Archivado.', product };

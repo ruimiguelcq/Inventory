@@ -172,3 +172,23 @@ for (const input of document.querySelectorAll('.media-box__input')) {
     if (note) note.textContent = input.files && input.files[0] ? input.files[0].name : '';
   });
 }
+
+// Live margin: Ganancia follows Precio minus Precio de fábrica while the user types.
+for (const card of document.querySelectorAll('.price-card')) {
+  const price = card.querySelector('[data-price]');
+  const cost = card.querySelector('[data-cost]');
+  const profit = card.querySelector('[data-profit]');
+  if (!price || !cost || !profit) continue;
+  const amount = (value) => {
+    const text = value.trim().replace(',', '.');
+    return /^\d+(?:\.\d{1,2})?$/.test(text) ? Number(text) : null;
+  };
+  const update = () => {
+    const sale = amount(price.value);
+    const factory = amount(cost.value);
+    profit.textContent = sale !== null && factory !== null ? `$${(sale - factory).toFixed(2)}` : '—';
+  };
+  price.addEventListener('input', update);
+  cost.addEventListener('input', update);
+  update();
+}

@@ -60,10 +60,15 @@ test('the product form ships the two-column layout, Multimedia, Costo and the in
   assert.ok(partNumber > -1 && description > partNumber && multimedia > description && image > multimedia, 'multimedia va tras la descripción');
   assert.match(form, /Multimedia/);
   assert.match(form, /name="image" type="file" accept="image\/jpeg,image\/png,image\/webp"/);
-  // Precio card holds Precio and the internal Costo; minimum stock and initial quantity are gone.
+  // Precio card: Precio, then additional prices with the internal Precio de fábrica and Ganancia.
   assert.match(form, /<h2>Precio<\/h2>/);
   assert.match(form, /name="price"/);
   assert.match(form, /name="cost"/);
+  assert.match(form, /Precios adicionales/);
+  assert.match(form, /Precio de fábrica/);
+  assert.match(form, /Ganancia/);
+  assert.match(form, /currency-input__symbol/);
+  assert.doesNotMatch(form, /Cobrar impuestos|Precio unitario|Precio de comparación/);
   assert.doesNotMatch(form, /name="minimumStock"/);
   assert.doesNotMatch(form, /Mínimo de stock|Cantidad inicial/);
   // Inventory card with an available quantity and the manual location.
@@ -85,17 +90,19 @@ test('Precio and Costo are saved and the detail shows the margin', async (t) => 
   assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'C-1', description: 'Con coste', presentation: 'KIT', price: '10.00', cost: '6.50' })).status, 303);
   const detail = await (await a.get('/products/1')).text();
   assert.match(detail, /<dt>Precio<\/dt><dd>\$10\.00<\/dd>/);
-  assert.match(detail, /<dt>Costo<\/dt><dd>\$6\.50<\/dd>/);
+  assert.match(detail, /<dt>Precio de fábrica<\/dt><dd>\$6\.50<\/dd>/);
   assert.match(detail, /<dt>Ganancia<\/dt><dd>\$3\.50<\/dd>/);
-  // The form reloads both values.
+  // The form reloads both values and shows the additional prices.
   const form = await (await a.get('/products/1/edit')).text();
   assert.match(form, /name="price" inputmode="decimal" value="10\.00"/);
   assert.match(form, /name="cost" inputmode="decimal" value="6\.50"/);
-  // An invalid cost is rejected with a cost-specific message and keeps the stored value.
+  assert.match(form, /Precios adicionales/);
+  assert.match(form, /Ganancia/);
+  // An invalid factory price is rejected with a specific message and keeps the stored value.
   const invalid = await a.post('/products/1', { csrfToken: a.csrfToken, partNumber: 'C-1', description: 'Con coste', presentation: 'KIT', cost: 'abc' });
   assert.equal(invalid.status, 400);
-  assert.match(await invalid.text(), /El costo/);
-  assert.match(await (await a.get('/products/1')).text(), /<dt>Costo<\/dt><dd>\$6\.50<\/dd>/);
+  assert.match(await invalid.text(), /El precio de fábrica/);
+  assert.match(await (await a.get('/products/1')).text(), /<dt>Precio de fábrica<\/dt><dd>\$6\.50<\/dd>/);
 });
 
 test('the starter categories ship with the app and are seeded only once across restarts', async (t) => {
