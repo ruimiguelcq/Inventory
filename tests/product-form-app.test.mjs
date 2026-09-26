@@ -98,6 +98,9 @@ test('Precio and Costo are saved and the detail shows the margin', async (t) => 
   assert.match(form, /name="cost" inputmode="decimal" value="6\.50"/);
   assert.match(form, /Precios adicionales/);
   assert.match(form, /Ganancia/);
+  // A negative margin reads -$3.00, not $-3.00.
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'C-2', description: 'A pérdida', presentation: 'KIT', price: '5.00', cost: '8.00' })).status, 303);
+  assert.match(await (await a.get('/products/2')).text(), /<dt>Ganancia<\/dt><dd>-\$3\.00<\/dd>/);
   // An invalid factory price is rejected with a specific message and keeps the stored value.
   const invalid = await a.post('/products/1', { csrfToken: a.csrfToken, partNumber: 'C-1', description: 'Con coste', presentation: 'KIT', cost: 'abc' });
   assert.equal(invalid.status, 400);

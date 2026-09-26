@@ -186,7 +186,12 @@ for (const card of document.querySelectorAll('.price-card')) {
   const update = () => {
     const sale = amount(price.value);
     const factory = amount(cost.value);
-    profit.textContent = sale !== null && factory !== null ? `$${(sale - factory).toFixed(2)}` : '—';
+    if (sale === null || factory === null) {
+      profit.textContent = '—';
+      return;
+    }
+    const margin = sale - factory;
+    profit.textContent = margin < 0 ? `-$${(-margin).toFixed(2)}` : `$${margin.toFixed(2)}`;
   };
   price.addEventListener('input', update);
   cost.addEventListener('input', update);

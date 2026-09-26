@@ -13,6 +13,11 @@ export function escapeHtml(value = '') {
   })[character]);
 }
 
+// Signed dollars for the margin: -$2.00 rather than $-2.00.
+function formatMargin(cents) {
+  return cents < 0 ? `-$${formatCents(-cents)}` : `$${formatCents(cents)}`;
+}
+
 // Shared stock marker: zero wins as agotado, then a positive quantity at or below the minimum.
 function stockBadge(status) {
   return status === 'agotado' ? '<span class="badge badge-out">Agotado</span>'
@@ -414,7 +419,7 @@ export function productDetailPage({ product, ...session }) {
         <dt>Existencias</dt><dd>${product.quantity}</dd>
         <dt>Precio</dt><dd>${product.price_cents == null ? '—' : `$${formatCents(product.price_cents)}`}</dd>
         <dt>Precio de fábrica</dt><dd>${product.cost_cents == null ? '—' : `$${formatCents(product.cost_cents)}`}</dd>
-        ${product.price_cents != null && product.cost_cents != null ? `<dt>Ganancia</dt><dd>$${formatCents(product.price_cents - product.cost_cents)}</dd>` : ''}
+        ${product.price_cents != null && product.cost_cents != null ? `<dt>Ganancia</dt><dd>${formatMargin(product.price_cents - product.cost_cents)}</dd>` : ''}
         <dt>Descripción</dt><dd class="long-description">${product.long_description ? escapeHtml(product.long_description) : '—'}</dd>
         <dt>Categoría</dt><dd>${escapeHtml(product.category_name ?? 'Sin categoría')}</dd>
         <dt>Tipo de producto</dt><dd>${escapeHtml(product.product_type_name ?? '—')}</dd>
@@ -516,7 +521,7 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
   `;
   const priceValue = product.price ?? (product.price_cents != null ? formatCents(product.price_cents) : '');
   const costValue = product.cost ?? (product.cost_cents != null ? formatCents(product.cost_cents) : '');
-  const profitValue = product.price_cents != null && product.cost_cents != null ? `$${formatCents(product.price_cents - product.cost_cents)}` : '—';
+  const profitValue = product.price_cents != null && product.cost_cents != null ? formatMargin(product.price_cents - product.cost_cents) : '—';
   const action = isNew ? '/products' : `/products/${product.id}`;
   const title = isNew ? 'Añadir repuesto' : 'Editar repuesto';
   const content = `
