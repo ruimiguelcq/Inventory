@@ -90,14 +90,13 @@ test('the administrator can set up access and create a repuesto visible in the i
   const savedHtml = await savedPage.text();
   assert.match(savedHtml, /6L-12345/);
   assert.match(savedHtml, /Conchas de biela/);
-  assert.match(savedHtml, /SET/);
+  // Inventory shows only Producto, P/N and a read-only Disponible; location and minimum are gone.
+  assert.match(savedHtml, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+  assert.doesNotMatch(savedHtml, /data-column|Ubicación|Mínimo de stock|Estante B/);
   const catalogHtml = await (await fetch(`${baseUrl}/products`, { headers: { cookie: administratorCookie } })).text();
   assert.match(catalogHtml, /6L-12345/);
   const detailHtml = await (await fetch(`${baseUrl}/products/1`, { headers: { cookie: administratorCookie } })).text();
   assert.match(detailHtml, /Marina Parts/);
-  assert.match(savedHtml, /Estante B · caja 4/);
-  assert.match(savedHtml, /<td[^>]*data-column="minimum"[^>]*>2<\/td>/);
-  assert.match(savedHtml, /<th[^>]*>Existencias<\/th>/);
 });
 
 test('a duplicate P/N is rejected without changing the saved repuesto', async () => {
@@ -150,7 +149,7 @@ test('the administrator can edit a repuesto and see the updated details', async 
   const inventoryResponse = await fetch(`${baseUrl}/inventory`, { headers: { cookie: administratorCookie } });
   const inventoryHtml = await inventoryResponse.text();
   assert.match(inventoryHtml, /Conchas de biela originales/);
-  assert.match(inventoryHtml, /Estante C/);
+  assert.doesNotMatch(inventoryHtml, /Estante C/);
 });
 
 test('unauthenticated visitors are redirected and the administrator can sign in and out', async () => {

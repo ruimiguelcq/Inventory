@@ -260,16 +260,11 @@ async function hashPassword(password) {
   return { passwordSalt, passwordHash };
 }
 
-// Filter shape shared by both catalog views and the generic error fallback so they render consistently.
-function inventoryFilters(params) {
+// Query state shared by both catalog views and the generic error fallback so they render consistently.
+function catalogFilters(params) {
   return {
     q: (params.get('q') ?? '').trim(),
-    presentation: params.get('presentation') ?? '',
-    category: params.get('category') ?? '',
-    brand: params.get('brand') ?? '',
     state: catalogState(params),
-    outOfStock: params.get('outOfStock') === 'on',
-    lowStock: params.get('lowStock') === 'on',
     archived: params.get('archived') === 'on',
   };
 }
@@ -288,26 +283,18 @@ export function createInventoryServer({
   let lastRestore = null;
 
   function catalogOptions(params, inventory = false) {
-    // Products exposes only the instant search and the state selector, and pages at a fixed 50;
-    // Inventory keeps its filters and size options until its own ticket simplifies the view.
-    let queryParams;
-    if (inventory) {
-      queryParams = new URLSearchParams(params);
-      queryParams.set('state', 'active');
-    } else {
-      const query = (params.get('q') ?? '').trim();
-      queryParams = new URLSearchParams();
-      if (query) queryParams.set('q', query);
-      queryParams.set('state', catalogState(params));
-      const page = params.get('page');
-      if (page) queryParams.set('page', page);
-    }
+    // Both catalog views expose only the instant search and page at a fixed 50; Inventory is
+    // always active-only, while Products keeps its state selector.
+    const query = (params.get('q') ?? '').trim();
+    const queryParams = new URLSearchParams();
+    if (query) queryParams.set('q', query);
+    queryParams.set('state', inventory ? 'active' : catalogState(params));
+    const page = params.get('page');
+    if (page) queryParams.set('page', page);
     const products = listProducts(database);
     return {
       ...paginateProducts(filterProducts(products, queryParams), queryParams),
-      filters: inventoryFilters(queryParams),
-      categories: listCategories(database),
-      brands: [...new Set(products.map((product) => product.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+      filters: catalogFilters(queryParams),
       queryParams,
     };
   }

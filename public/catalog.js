@@ -1,38 +1,3 @@
-const columnToggles = document.querySelectorAll('[data-column-toggle]');
-const preferenceKey = 'taller-marino.inventory.columns';
-let preferences = {};
-try {
-  const stored = JSON.parse(localStorage.getItem(preferenceKey));
-  if (stored && typeof stored === 'object' && !Array.isArray(stored)) preferences = stored;
-} catch {
-  // Storage can be unavailable or contain a stale value; the controls still work.
-}
-
-// Optional columns only exist in Inventory today. The toggles read the live DOM so they would keep
-// working if the table were ever swapped in place.
-const applyColumns = () => {
-  for (const toggle of columnToggles) {
-    const column = toggle.dataset.columnToggle;
-    document.querySelectorAll(`[data-column="${column}"]`).forEach((cell) => {
-      cell.hidden = !toggle.checked;
-    });
-  }
-};
-
-for (const toggle of columnToggles) {
-  toggle.checked = preferences[toggle.dataset.columnToggle] === true;
-  toggle.addEventListener('change', () => {
-    preferences[toggle.dataset.columnToggle] = toggle.checked;
-    try {
-      localStorage.setItem(preferenceKey, JSON.stringify(preferences));
-    } catch {
-      // Keep the current view usable even when persistence is blocked.
-    }
-    applyColumns();
-  });
-}
-applyColumns();
-
 // Selection state is read from the live DOM, so delegated events keep working after a swap.
 const updateSelection = () => {
   const selectAll = document.querySelector('[data-select-all]');
@@ -57,8 +22,6 @@ const clearSelection = () => {
   document.querySelectorAll('[data-row-selection]').forEach((input) => { input.checked = false; });
   updateSelection();
 };
-document.querySelector('.filter-bar')?.addEventListener('input', clearSelection);
-document.querySelector('.filter-bar')?.addEventListener('change', clearSelection);
 document.querySelector('.catalog-toolbar')?.addEventListener('input', clearSelection);
 document.querySelector('.catalog-toolbar')?.addEventListener('change', clearSelection);
 document.querySelectorAll('.pagination a').forEach((link) => link.addEventListener('click', clearSelection));

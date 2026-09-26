@@ -119,14 +119,14 @@ export function productsPage(options) {
   return catalogPage(options);
 }
 
-function catalogPage({ products, filters = {}, categories = [], brands = [], pagination, queryParams = new URLSearchParams(), inventory = false, ...session }) {
+function catalogPage({ products, filters = {}, pagination, queryParams = new URLSearchParams(), inventory = false, ...session }) {
   const canManage = canManageInventory(session.role);
   const archivedView = !inventory && (filters.state === 'archived' || (!filters.state && Boolean(filters.archived)));
   const route = inventory ? '/inventory' : '/products';
   const title = inventory ? 'Inventario' : 'Productos';
   const view = inventory ? 'inventory' : 'products';
   const importHref = `/imports?view=${view}`;
-  const hasActiveFilter = Boolean(filters.q || filters.presentation || filters.category || filters.brand || filters.outOfStock || filters.lowStock);
+  const hasActiveFilter = Boolean(filters.q);
   const csrfToken = session.csrfToken;
   // The "all" export carries the current search and state, so it covers every matching page.
   const exportParams = new URLSearchParams(queryParams);
@@ -136,25 +136,15 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   exportParams.set('scope', 'all');
   const exportHref = `/exports?${exportParams.toString()}`;
 
-  // Inventory keeps a per-row stock action; Products archives and restores through the selection,
-  // so its only columns are the seven the catalog asks for.
-  const stockActions = (product) => (canManage
-    ? `<a href="/products/${product.id}/stock">Ajustar existencias</a> · <a href="/products/${product.id}/history">Historial</a>`
-    : `<a href="/products/${product.id}/history">Historial</a>`);
-
-  // Products reads inventory as `N existencias` coloured by the product minimum;
-  // Inventory keeps its existing quantity, location and minimum columns.
+  // Inventory reads the same green/red level as Products in a read-only Disponible column and
+  // keeps its per-row stock and history actions inline; Products archives/restores via the selection.
   const rows = products.map((product) => {
     if (inventory) {
-      const status = stockStatus(product);
       return `<tr>
       <td><input type="checkbox" name="id" value="${product.id}" form="export-selection" data-row-selection aria-label="Seleccionar ${escapeHtml(product.part_number)}"></td>
-      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a></span></td>
+      <td><span class="product-cell">${productThumb(product)}<a class="product-description" href="/products/${product.id}">${escapeHtml(product.description)}</a>${canManage ? ` · <a href="/products/${product.id}/stock">Ajustar existencias</a>` : ''} · <a href="/products/${product.id}/history">Historial</a></span></td>
       <td class="part-number">${escapeHtml(product.part_number)}</td>
-      <td class="quantity-cell">${product.quantity}${status ? ` ${stockBadge(status)}` : ''}</td>
-      <td data-column="location" hidden>${escapeHtml(product.location || '—')}</td>
-      <td data-column="minimum" hidden class="quantity-cell">${product.minimum_stock ?? '—'}</td>
-      <td>${stockActions(product)}</td>
+      <td class="quantity-cell inventory-${inventoryLevel(product)}">${product.quantity}</td>
     </tr>`;
     }
     return `<tr>
@@ -172,11 +162,9 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   const header = inventory
     ? `<thead><tr>
       <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
-      <th scope="col">Nombre</th>
+      <th scope="col">Producto</th>
       <th scope="col">P/N</th>
-      <th scope="col" class="align-right">Existencias</th>
-      <th scope="col" data-column="location" hidden>Ubicación</th><th scope="col" data-column="minimum" hidden>Mínimo de stock</th>
-      <th scope="col">Acciones</th>
+      <th scope="col" class="align-right">Disponible</th>
     </tr></thead>`
     : `<thead><tr>
       <th scope="col"><input type="checkbox" data-select-all aria-label="Seleccionar todos los productos visibles"></th>
@@ -194,8 +182,8 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   const emptyState = hasActiveFilter
     ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
       <h3>Sin resultados</h3>
-      <p>Ningún repuesto coincide con la búsqueda o los filtros.</p>
-      <a class="button button-secondary" href="${route}">Limpiar filtros</a></div>`
+      <p>Ningún repuesto coincide con la búsqueda.</p>
+      <a class="button button-secondary" href="${route}">Limpiar búsqueda</a></div>`
     : archivedView
       ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
         <h3>No hay repuestos archivados</h3>
@@ -207,44 +195,21 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
           <a class="button button-secondary" href="/products/new">Añadir primer repuesto</a>` : '<p>Todavía no hay repuestos registrados.</p>'}
         </div>`;
 
-  // Inventory keeps its search and filters until its own ticket simplifies the view.
-  const inventoryToolbar = `
-    <form class="filter-bar" method="get" action="${route}">
-      <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o descripción" aria-label="Buscar repuestos">
-      <select name="presentation" aria-label="Filtrar por presentación">
-        <option value="">Todas las presentaciones</option>
-        ${PRESENTATIONS.map(([value]) => `<option value="${value}" ${filters.presentation === value ? 'selected' : ''}>${value}</option>`).join('')}
-      </select>
-      <select name="category" aria-label="Filtrar por categoría">
-        <option value="">Todas las categorías</option>
-        <option value="none" ${filters.category === 'none' ? 'selected' : ''}>Sin categoría</option>
-        ${categories.map((category) => `<option value="${category.id}" ${filters.category === String(category.id) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}
-      </select>
-      <select name="brand" aria-label="Filtrar por marca">
-        <option value="">Todas las marcas</option>
-        ${brands.map((brand) => `<option value="${escapeHtml(brand)}" ${filters.brand === brand ? 'selected' : ''}>${escapeHtml(brand)}</option>`).join('')}
-      </select>
-      <label class="filter-check"><input type="checkbox" name="outOfStock" ${filters.outOfStock ? 'checked' : ''}> Agotados</label>
-      <label class="filter-check"><input type="checkbox" name="lowStock" ${filters.lowStock ? 'checked' : ''}> Stock bajo</label>
-      <label class="page-size">Filas por página <select name="pageSize" aria-label="Filas por página">
-        ${[25, 50, 100].map((size) => `<option value="${size}" ${(pagination?.pageSize ?? 50) === size ? 'selected' : ''}>${size}</option>`).join('')}
-      </select></label>
-      <button class="button button-secondary" type="submit">Filtrar</button>
-      ${hasActiveFilter ? `<a class="button button-quiet" href="${route}">Limpiar</a>` : ''}
-    </form>`;
-
-  // Products searches while typing (progressive enhancement, normal submit as fallback)
-  // and offers the state selector; it has no filter bar and pages at a fixed 50 rows.
-  const productsToolbar = `
+  // Both catalog views search while typing (progressive enhancement, normal submit as fallback).
+  // Inventory has no extra filters; Products adds its state selector; both page at a fixed 50.
+  const catalogToolbar = (extra = '') => `
     <form class="catalog-toolbar" method="get" action="${route}" data-instant-search>
       <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por P/N o nombre" aria-label="Buscar por P/N o nombre">
-      <select name="state" aria-label="Estado">
+      ${extra}
+      <button class="visually-hidden" type="submit">Buscar</button>
+    </form>`;
+  const stateSelector = `<select name="state" aria-label="Estado">
         <option value="active" ${filters.state === 'active' || !filters.state ? 'selected' : ''}>Activos</option>
         <option value="archived" ${filters.state === 'archived' ? 'selected' : ''}>Archivados</option>
         <option value="all" ${filters.state === 'all' ? 'selected' : ''}>Todos</option>
-      </select>
-      <button class="visually-hidden" type="submit">Buscar</button>
-    </form>`;
+      </select>`;
+  const inventoryToolbar = catalogToolbar();
+  const productsToolbar = catalogToolbar(stateSelector);
 
   const selectionActions = `
     <form id="export-selection" class="selection-actions" method="post" action="/exports">
@@ -268,7 +233,6 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
   const pageLink = (number, label) => {
     const params = new URLSearchParams(queryParams);
     params.set('page', number);
-    if (inventory) params.set('pageSize', pagination.pageSize);
     return `<a class="button button-secondary" href="${route}?${escapeHtml(params.toString())}">${label}</a>`;
   };
   const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
@@ -292,10 +256,6 @@ function catalogPage({ products, filters = {}, categories = [], brands = [], pag
         ${selectionActions}
       </div>
       ${inventory ? inventoryToolbar : productsToolbar}
-      ${inventory ? `<fieldset class="column-controls"><legend>Columnas opcionales</legend>
-        <label><input type="checkbox" data-column-toggle="location"> Ubicación</label>
-        <label><input type="checkbox" data-column-toggle="minimum"> Mínimo de stock</label>
-      </fieldset>` : ''}
       ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
       <div data-catalog-results>
         ${products.length ? `

@@ -37,19 +37,11 @@ Tras iniciar sesión se abre **Productos**. El lateral mantiene accesibles **Pro
 
 Gestión y Administración pueden elegir una categoría, un tipo de producto o un proveedor opcionales, o crearlos al guardar la ficha; categoría, presentación y marca son conceptos independientes. Los artículos anteriores empiezan **Sin categoría**, conservando cuentas, existencias e historial.
 
-**Inventario** muestra solo los activos y permite ajustar existencias; sus columnas opcionales **Ubicación** y **Mínimo de stock** se guardan en el navegador. Mientras llega su propia simplificación, mantiene una barra de búsqueda y filtros:
+**Inventario** muestra solo los activos; su búsqueda es instantánea por P/N o nombre y sus columnas son **Producto** (con miniatura), **P/N** y **Disponible**. Disponible refleja el stock actual, es de solo lectura y usa el mismo verde/rojo que Productos (el mínimo del producto, 10 por defecto). No aparecen Comprometido, Por recibir, En existencias, Ubicación ni Mínimo.
 
-- **Buscar** por P/N o descripción, sin distinguir mayúsculas.
-- **Filtrar por presentación** (SET, KIT o unidad).
-- **Categoría** (incluida Sin categoría) y **marca**, combinables con los demás filtros.
-- **Agotados:** artículos con cantidad cero.
-- **Stock bajo:** artículos con mínimo configurado y cantidad positiva menor o igual al mínimo. Sin mínimo no se aplica un umbral.
+Gestión y Administración pueden **Ajustar existencias** por fila, marcar artículos y usar **Añadir a lista de compra**, además de **Importar** y **Exportar**. Inventario pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. La casilla general selecciona únicamente la página visible; cambiar de página o de búsqueda limpia la selección.
 
-En Inventario, cada artículo muestra su cantidad disponible junto a un distintivo **Agotado** (cero existencias) o **Stock bajo**. El botón **Limpiar** restablece la búsqueda y los filtros.
-
-Inventario pagina con **50 filas** por defecto y opciones de **25/100**. Anterior y Siguiente conservan los filtros. La casilla general selecciona únicamente la página visible; cambiar página, tamaño, búsqueda o filtros limpia la selección.
-
-Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** de la barra de filtros muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
+Gestión y Administración pueden **Archivar** un repuesto desde Productos para retirarlo de la vista activa sin borrar su historial ni existencias, o usar **Archivar selección / Desarchivar selección** sobre las casillas marcadas. El servidor valida permisos e identificadores y aplica el lote completo en una transacción. La opción **Archivados** del selector de estado muestra los artículos archivados. No hay borrado definitivo desde la interfaz.
 
 ## Imágenes de los productos
 
@@ -106,7 +98,7 @@ Desde **Productos** y **Inventario**, cualquier miembro del equipo con sesión i
 - **Exportar** (Inventario): P/N, Descripción y Cantidad de los artículos activos en `inventario.xlsx`.
 - **Exportar selección a Excel:** solo los artículos marcados en las casillas de la tabla. Una selección vacía o inválida muestra un mensaje y no descarga el catálogo completo.
 
-La exportación completa respeta los filtros y el estado de la vista y recorre **todas las páginas**, no solo la visible. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.
+La exportación completa respeta la búsqueda y el estado de la vista y recorre **todas las páginas**, no solo la visible. Conserva P/N como texto, las cantidades como números y los campos opcionales sin valor como celdas vacías. Exportar no modifica artículos, existencias ni historial.
 
 Puedes cargar de nuevo el archivo en **Importar Excel** para revisar los cambios antes de confirmarlos. Para recuperar las cantidades exportadas desde Inventario, activa **Establecer en**; **Ajustar por** sumaría las cantidades al stock actual. Se aplican los límites de importación de 2 MB y 1000 filas por archivo; para inventarios mayores, prepara lotes dentro de esos límites conservando los encabezados. Una exportación sin artículos genera solo los encabezados.
 

@@ -66,44 +66,41 @@ async function seed(a) {
   await setStock(a, 4, 1);
 }
 
-test('search finds articles by P/N or description and filters by presentation', async (t) => {
+test('Inventario searches by P/N or name and ignores the retired filters', async (t) => {
   const a = await app(t);
   await seed(a);
 
-  const byDescription = await (await a.get('/inventory?q=culata')).text();
-  assert.match(byDescription, /JUNTA/);
-  assert.doesNotMatch(byDescription, /ANODO|KIT-BOMBA|FILTRO/);
+  const byName = await (await a.get('/inventory?q=culata')).text();
+  assert.match(byName, /JUNTA/);
+  assert.doesNotMatch(byName, /ANODO|KIT-BOMBA|FILTRO/);
 
   const byPartNumber = await (await a.get('/inventory?q=kit-bomba')).text();
   assert.match(byPartNumber, /KIT-BOMBA/);
   assert.doesNotMatch(byPartNumber, /JUNTA|ANODO|FILTRO/);
 
-  const onlySets = await (await a.get('/inventory?presentation=SET')).text();
-  assert.match(onlySets, /KIT-BOMBA/);
-  assert.doesNotMatch(onlySets, /JUNTA|ANODO|FILTRO/);
-
-  const onlyUnits = await (await a.get('/inventory?presentation=unidad')).text();
-  assert.match(onlyUnits, /ANODO/);
-  assert.match(onlyUnits, /FILTRO/);
-  assert.doesNotMatch(onlyUnits, /JUNTA|KIT-BOMBA/);
+  // Presentation, category, brand and stock level no longer filter Inventory.
+  const ignored = await (await a.get('/inventory?presentation=SET&category=999&brand=Nope&outOfStock=on&lowStock=on')).text();
+  for (const partNumber of ['JUNTA', 'ANODO', 'KIT-BOMBA', 'FILTRO']) {
+    assert.match(ignored, new RegExp(partNumber));
+  }
 });
 
-test('the table flags agotado and stock bajo and filters each state', async (t) => {
+test('Inventario shows a read-only Disponible coloured green or red like Productos', async (t) => {
   const a = await app(t);
   await seed(a);
+  // JUNTA min 2 qty 0, KIT-BOMBA min 4 qty 2 and ANODO (no minimum, fallback 10) qty 3 are red;
+  // FILTRO meets its minimum of 1 and is green.
+  const page = await (await a.get('/inventory')).text();
+  assert.match(page, /class="quantity-cell inventory-low">0</);
+  assert.match(page, /class="quantity-cell inventory-low">2</);
+  assert.match(page, /class="quantity-cell inventory-low">3</);
+  assert.match(page, /class="quantity-cell inventory-ok">1</);
+  // Read-only: no badges and no `N existencias` label.
+  assert.doesNotMatch(page, /badge-out|badge-low|\d+ existencias/);
 
-  const full = await (await a.get('/inventory')).text();
-  assert.equal([...full.matchAll(/badge-out/g)].length, 1);
-  assert.equal([...full.matchAll(/badge-low/g)].length, 2);
-
-  const out = await (await a.get('/inventory?outOfStock=on')).text();
-  assert.match(out, /JUNTA/);
-  assert.doesNotMatch(out, /ANODO|KIT-BOMBA|FILTRO/);
-
-  const low = await (await a.get('/inventory?lowStock=on')).text();
-  assert.match(low, /KIT-BOMBA/);
-  assert.match(low, /FILTRO/);
-  assert.doesNotMatch(low, /JUNTA|ANODO/);
+  // Reaching the minimum flips the level to green.
+  await setStock(a, 3, 4);
+  assert.match(await (await a.get('/inventory')).text(), /class="quantity-cell inventory-ok">4</);
 });
 
 test('archiving retires an article from the active list, preserves its history and restores it', async (t) => {
@@ -179,25 +176,25 @@ test('archiving requires gestión, a valid CSRF token and an existing article', 
   assert.match(viewerActive, /JUNTA/);
 });
 
-test('status filters combine as a union and respect the minimum boundaries', async (t) => {
+test('Inventario shows only Producto, P/N and Disponible with an instant search', async (t) => {
   const a = await app(t);
   await seed(a);
 
-  const both = await (await a.get('/inventory?outOfStock=on&lowStock=on')).text();
-  assert.match(both, /JUNTA/);
-  assert.match(both, /KIT-BOMBA/);
-  assert.match(both, /FILTRO/);
-  assert.doesNotMatch(both, /ANODO/);
+  const page = await (await a.get('/inventory')).text();
+  assert.match(page, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+  assert.doesNotMatch(page, /<th[^>]*>Acciones<\/th>|<th[^>]*>Existencias<\/th>|<th[^>]*>Ubicación<\/th>|<th[^>]*>Mínimo de stock<\/th>/);
+  assert.doesNotMatch(page, /name="presentation"|name="category"|name="brand"|name="outOfStock"|name="lowStock"|name="pageSize"|data-column|data-column-toggle/);
+  assert.doesNotMatch(page, /class="filter-bar"/);
 
-  // Minimum 0: quantity 0 is agotado, any positive quantity is not low stock.
-  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'MIN-CERO', description: 'Mínimo cero', presentation: 'unidad', minimumStock: '0' })).status, 303);
-  const zero = await (await a.get('/inventory?outOfStock=on')).text();
-  assert.match(zero, /MIN-CERO/);
-  assert.doesNotMatch(await (await a.get('/inventory?lowStock=on')).text(), /MIN-CERO/);
-  await setStock(a, 5, 3);
-  const positive = await (await a.get('/inventory')).text();
-  assert.match(positive, /MIN-CERO/);
-  assert.equal([...positive.matchAll(/badge-low/g)].length, 2);
+  // Instant search and the selection stay; Importar/Exportar live in the header.
+  assert.match(page, /class="catalog-toolbar"[^>]*data-instant-search/);
+  assert.match(page, /placeholder="Buscar por P\/N o nombre"/);
+  assert.match(page, /data-catalog-results/);
+  assert.match(page, /formaction="\/purchase-orders\/add-selection"/);
+  assert.match(page, /href="\/products\/1\/stock">Ajustar existencias/);
+  assert.match(page, /href="\/products\/1\/history">Historial/);
+  assert.match(page, /href="\/imports\?view=inventory">Importar<\/a>/);
+  assert.match(page, /href="\/exports\?[^"]*">Exportar<\/a>/);
 });
 
 test('an existing database is upgraded with the archived column and keeps its articles', async (t) => {
@@ -277,9 +274,9 @@ test('desktop sections, product details and management links respect every role 
     assert.equal(products.includes('Agregar producto'), role !== 'viewer');
     assert.equal(products.includes('>Importar</a>'), role !== 'viewer');
     const inventory = await (await a.get('/inventory')).text();
-    assert.doesNotMatch(inventory, /name="archived"|name="state"|<th[^>]*>Marca/);
-    assert.match(inventory, /data-column="location" hidden/);
-    assert.match(inventory, /data-column="minimum" hidden/);
+    assert.doesNotMatch(inventory, /name="archived"|name="state"|name="presentation"|name="pageSize"/);
+    assert.match(inventory, /<th scope="col">Producto<\/th>\s*<th scope="col">P\/N<\/th>\s*<th scope="col" class="align-right">Disponible<\/th>/);
+    assert.match(inventory, /class="catalog-toolbar"[^>]*data-instant-search/);
     const detail = await a.get('/products/1');
     assert.equal(detail.status, 200);
     const html = await detail.text();
@@ -421,38 +418,34 @@ test('categories are optional, assigned or created atomically, and editable only
   assert.match(await (await a.get('/products/1')).text(), /Motor &amp; agua/);
 });
 
-test('combined catalog filters run before stable pagination, and inventory is always active-only', async (t) => {
+test('Inventario paginates a fixed 50 rows and stays active-only whatever the query', async (t) => {
   const a = await app(t);
-  for (let index = 1; index <= 107; index++) {
+  for (let index = 1; index <= 55; index++) {
     assert.equal((await a.post('/products', {
-      csrfToken: a.csrfToken, partNumber: `P-${String(index).padStart(3, '0')}`, description: 'Bomba marina',
-      presentation: 'KIT', brand: 'Marca & uno', ...(index === 1 ? { newCategory: 'Motor' } : { categoryId: '1' }),
+      csrfToken: a.csrfToken, partNumber: `P-${String(index).padStart(3, '0')}`, description: 'Bomba marina', presentation: 'KIT',
     })).status, 303);
   }
-  for (const partNumber of ['JUNTA', 'ANODO', 'KIT-BOMBA', 'FILTRO']) {
-    assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber, description: 'Otro artículo', presentation: 'unidad' })).status, 303);
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'OTRO', description: 'Ánodo de sacrificio', presentation: 'unidad' })).status, 303);
+  assert.equal((await a.post('/products/56/archive', { csrfToken: a.csrfToken })).status, 303);
+
+  const first = await (await a.get('/inventory?q=bomba')).text();
+  assert.equal(rowIds(first).length, 50);
+  assert.match(first, /55 artículos · Página 1 de 2/);
+  assert.doesNotMatch(first, /name="pageSize"/);
+  const next = first.match(/href="([^"]+)">Siguiente/)[1].replaceAll('&amp;', '&');
+  assert.equal(rowIds(await (await a.get(next)).text()).length, 5);
+  // A hand-crafted size is ignored: Inventario always shows 50 per page.
+  assert.equal(rowIds(await (await a.get('/inventory?q=bomba&pageSize=25')).text()).length, 50);
+  assert.equal(rowIds(await (await a.get('/inventory?q=bomba&page=999')).text()).length, 5);
+
+  // The retired filters are ignored rather than applied.
+  assert.equal(rowIds(await (await a.get('/inventory?q=bomba&category=1&brand=x&presentation=SET&outOfStock=on')).text()).length, 50);
+
+  // Archived articles never appear in Inventario, even through a forged state.
+  for (const query of ['q=OTRO', 'state=all&q=OTRO', 'state=archived&q=OTRO']) {
+    assert.deepEqual(rowIds(await (await a.get(`/inventory?${query}`)).text()), []);
   }
-  // Inventory keeps its combined filters and 25/100 sizes; Products no longer has them.
-  for (const route of ['/inventory']) {
-    const query = 'q=bomba&category=1&brand=Marca+%26+uno&presentation=KIT&outOfStock=on';
-    const first = await (await a.get(`${route}?${query}`)).text();
-    assert.deepEqual(rowIds(first), Array.from({ length: 50 }, (_, i) => i + 1));
-    assert.match(first, /107 artículos · Página 1 de 3/);
-    const next = first.match(/href="([^"]+)">Siguiente/)[1].replaceAll('&amp;', '&');
-    assert.deepEqual(rowIds(await (await a.get(next)).text()), Array.from({ length: 50 }, (_, i) => i + 51));
-    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&page=3`)).text()), [101, 102, 103, 104, 105, 106, 107]);
-    assert.equal(rowIds(await (await a.get(`${route}?${query}&pageSize=25&page=2`)).text()).length, 25);
-    assert.equal(rowIds(await (await a.get(`${route}?${query}&pageSize=100`)).text()).length, 100);
-    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&page=999`)).text()), [101, 102, 103, 104, 105, 106, 107]);
-    assert.equal(rowIds(await (await a.get(`${route}?${query}&page=-2&pageSize=7`)).text()).length, 50);
-    assert.deepEqual(rowIds(await (await a.get(`${route}?category=none`)).text()), [109, 111, 108, 110]);
-    assert.deepEqual(rowIds(await (await a.get(`${route}?${query}&brand=missing`.replace('brand=Marca+%26+uno&', ''))).text()), []);
-  }
-  assert.equal((await a.post('/products/1/archive', { csrfToken: a.csrfToken })).status, 303);
-  assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [1]);
-  assert.ok(rowIds(await (await a.get('/products?state=all&q=P-001')).text()).includes(1));
-  assert.deepEqual(rowIds(await (await a.get('/inventory?state=all&q=P-001')).text()), []);
-  assert.deepEqual(rowIds(await (await a.get('/inventory?state=archived&q=P-001')).text()), []);
+  assert.deepEqual(rowIds(await (await a.get('/products?state=archived')).text()), [56]);
 });
 
 test('bulk archive validates the entire selection and permissions and preserves stock and history', async (t) => {
