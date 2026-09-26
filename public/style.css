@@ -30,7 +30,7 @@ body {
 
 a { color: inherit; }
 
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 :focus-visible {
   outline: 3px solid #50a69b;
@@ -119,6 +119,7 @@ button, input, select { font: inherit; }
 .product-details { display: grid; grid-template-columns: max-content 1fr; gap: 12px 24px; }
 .product-details dt { color: var(--muted); }
 .product-details dd { margin: 0; }
+.product-details .long-description { white-space: pre-wrap; }
 .status-tag { padding: 3px 8px; border-radius: 4px; background: #eee; white-space: nowrap; }
 
 .page-shell {
@@ -296,7 +297,7 @@ tbody tr:hover { background: #f7fbfa; }
 .field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
 .field-wide { grid-column: 1 / -1; }
 .field label, .auth-panel label { color: #314652; font-size: 13px; font-weight: 600; }
-.field input, .field select, .auth-panel input {
+.field input, .field select, .field textarea, .auth-panel input {
   width: 100%;
   min-height: 40px;
   padding: 8px 11px;
@@ -305,7 +306,8 @@ tbody tr:hover { background: #f7fbfa; }
   background: #fff;
   color: var(--ink);
 }
-.field input:hover, .field select:hover, .auth-panel input:hover { border-color: #8499a4; }
+.field textarea { resize: vertical; }
+.field input:hover, .field select:hover, .field textarea:hover, .auth-panel input:hover { border-color: #8499a4; }
 .required-mark, .optional-mark { margin-left: 6px; color: #71818a; font-size: 11px; font-weight: 400; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 17px 24px; background: #fbfcfc; }
 .form-error {

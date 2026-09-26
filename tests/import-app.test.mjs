@@ -122,7 +122,7 @@ test('invalid rows and duplicates block the whole batch, including data without 
   assert.equal(preview.status, 200);
   const html = await preview.text();
   assert.match(html, /P\/N duplicado/);
-  assert.match(html, /descripción/);
+  assert.match(html, /nombre de producto/);
   assert.match(html, /debajo de cero/);
   assert.match(html, /sin fórmulas/);
   assert.match(html, /número entero/);

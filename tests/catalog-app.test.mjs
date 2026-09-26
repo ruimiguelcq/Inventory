@@ -231,9 +231,21 @@ test('an existing database is upgraded with the archived column and keeps its ar
   const columns = upgraded.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
   assert.ok(columns.includes('archived'), 'archived column added');
   assert.ok(columns.includes('category_id'), 'category column added');
-  assert.equal(upgraded.prepare('SELECT category_id FROM products').get().category_id, null);
+  for (const column of ['long_description', 'price_cents', 'product_type_id', 'supplier_id']) {
+    assert.ok(columns.includes(column), `${column} column added`);
+  }
+  const legacyFields = upgraded.prepare("SELECT category_id, long_description, price_cents, product_type_id, supplier_id FROM products WHERE part_number = 'LEGACY-1'").get();
+  for (const field of ['category_id', 'long_description', 'price_cents', 'product_type_id', 'supplier_id']) {
+    assert.equal(legacyFields[field], null, `${field} defaults to null`);
+  }
+  const lists = upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('product_types', 'suppliers') ORDER BY name").all();
+  assert.deepEqual(lists.map((table) => table.name), ['product_types', 'suppliers']);
   const product = upgraded.prepare("SELECT part_number, archived FROM products WHERE part_number = 'LEGACY-1'").get();
   assert.equal(product.archived, 0);
+  // Reopening an already-migrated file must stay a no-op.
+  const again = openDatabase(databasePath);
+  assert.equal(again.prepare("SELECT part_number FROM products WHERE id = 1").get().part_number, 'LEGACY-1');
+  again.close();
 });
 
 test('desktop sections, product details and management links respect every role through HTTP', async (t) => {
@@ -439,5 +451,140 @@ test('migrating and restoring a pre-category database preserves accounts, articl
   checkState();
   assert.doesNotMatch(await (await a.get('/products/new')).text(), /Posterior/);
   assert.ok(await a.signIn('viewer', 'equipo-seguro-123'));
+});
+
+test('extended product fields are saved, shown and validated through HTTP', async (t) => {
+  const a = await app(t);
+  const base = { csrfToken: a.csrfToken, partNumber: 'MOTOR-1', description: 'Bomba de achique', presentation: 'KIT' };
+  const created = await a.post('/products', {
+    ...base, longDescription: 'Detalle\nlargo del producto.', price: '12.5',
+    newProductType: ' Motor eléctrico ', newSupplier: ' Proveedor & uno ', initialQuantity: '4',
+  });
+  assert.equal(created.status, 303);
+
+  const detail = await (await a.get('/products/1')).text();
+  assert.match(detail, /<dt>Precio<\/dt><dd>\$12\.50<\/dd>/);
+  assert.match(detail, /<dt>Descripción<\/dt><dd class="long-description">Detalle\nlargo del producto\.<\/dd>/);
+  assert.match(detail, /<dt>Tipo de producto<\/dt><dd>Motor eléctrico<\/dd>/);
+  assert.match(detail, /<dt>Proveedor<\/dt><dd>Proveedor &amp; uno<\/dd>/);
+
+  // The initial quantity is recorded once, as a creation movement.
+  const history = await (await a.get('/products/1/history')).text();
+  assert.match(history, /Alta/);
+  assert.match(history, /<td>4<\/td><td>0<\/td><td>4<\/td>/);
+
+  const edit = await (await a.get('/products/1/edit')).text();
+  assert.match(edit, /name="price" inputmode="decimal" value="12\.50"/);
+  assert.match(edit, /value="1" selected>Motor eléctrico/);
+  assert.match(edit, /value="1" selected>Proveedor &amp; uno/);
+  assert.match(edit, />Detalle\nlargo del producto\.<\/textarea>/);
+  assert.doesNotMatch(edit, /name="initialQuantity"/);
+
+  for (const price of ['1.234', 'abc', '-5', '1,2,3']) {
+    assert.equal((await a.post('/products', { ...base, partNumber: `P-${price}`, price })).status, 400, `price ${price}`);
+  }
+  assert.equal((await a.post('/products', { ...base, partNumber: 'LARGO', longDescription: 'x'.repeat(2001) })).status, 400);
+  for (const initialQuantity of ['-1', '1.5', 'muchos']) {
+    assert.equal((await a.post('/products', { ...base, partNumber: `Q-${initialQuantity}`, initialQuantity })).status, 400, `quantity ${initialQuantity}`);
+  }
+});
+
+test('prices are stored as integer cents and shown with two decimals', async (t) => {
+  const a = await app(t);
+  for (const [price, shown] of [['0.1', '0.10'], ['19.99', '19.99'], ['7', '7.00'], ['0', '0.00']]) {
+    assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: `P-${shown}`, description: shown, presentation: 'unidad', price })).status, 303);
+  }
+  const db = new DatabaseSync(a.databasePath, { readOnly: true });
+  try {
+    assert.deepEqual(db.prepare('SELECT price_cents FROM products ORDER BY id').all().map((row) => row.price_cents), [10, 1999, 700, 0]);
+  } finally { db.close(); }
+  assert.match(await (await a.get('/products/1')).text(), /Precio<\/dt><dd>\$0\.10<\/dd>/);
+  assert.match(await (await a.get('/products/3')).text(), /Precio<\/dt><dd>\$7\.00<\/dd>/);
+});
+
+test('product types and suppliers are created or reused without duplicating equivalent values', async (t) => {
+  const a = await app(t);
+  const base = { csrfToken: a.csrfToken, presentation: 'unidad' };
+  assert.equal((await a.post('/products', { ...base, partNumber: 'A', description: 'A', newProductType: ' Motor ', newSupplier: ' ACME ' })).status, 303);
+  assert.equal((await a.post('/products', { ...base, partNumber: 'B', description: 'B', newProductType: 'motor', newSupplier: 'acme' })).status, 303);
+  assert.equal((await a.post('/products', { ...base, partNumber: 'C', description: 'C', productTypeId: '1', supplierId: '1' })).status, 303);
+
+  const edit = await (await a.get('/products/1/edit')).text();
+  assert.equal([...edit.matchAll(/>Motor<\/option>/g)].length, 1);
+  assert.equal([...edit.matchAll(/>ACME<\/option>/g)].length, 1);
+  const detail = await (await a.get('/products/3')).text();
+  assert.match(detail, /Tipo de producto<\/dt><dd>Motor<\/dd>/);
+  assert.match(detail, /Proveedor<\/dt><dd>ACME<\/dd>/);
+
+  for (const productTypeId of ['9999', '-1', '1.5', '1x', '9007199254740992']) {
+    assert.equal((await a.post('/products/1', { ...base, partNumber: 'A', description: 'A', productTypeId })).status, 400, `type ${productTypeId}`);
+  }
+  for (const supplierId of ['9999', '-1', '1.5', '1x']) {
+    assert.equal((await a.post('/products/1', { ...base, partNumber: 'A', description: 'A', supplierId })).status, 400, `supplier ${supplierId}`);
+  }
+  assert.equal((await a.post('/products/1', { ...base, partNumber: 'A', description: 'A', productTypeId: '1', newProductType: 'Ambigua' })).status, 400);
+  assert.equal((await a.post('/products/1', { ...base, partNumber: 'A', description: 'A', supplierId: '1', newSupplier: 'Ambigua' })).status, 400);
+  assert.equal((await a.post('/products/1', { ...base, partNumber: 'A', description: 'A', newSupplier: 'x'.repeat(101) })).status, 400);
+});
+
+test('consulta views extended fields but cannot change them', async (t) => {
+  const a = await app(t);
+  assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'X', description: 'X', presentation: 'KIT', newProductType: 'Tipo', price: '1.00' })).status, 303);
+  await a.post('/users', { csrfToken: a.csrfToken, username: 'consulta', password: 'consulta-segura-123', role: 'viewer' });
+  const viewerToken = await a.signIn('consulta', 'consulta-segura-123');
+  assert.match(await (await a.get('/products/1')).text(), /Tipo de producto<\/dt><dd>Tipo<\/dd>/);
+  assert.equal((await a.post('/products/1', { csrfToken: viewerToken, partNumber: 'X', description: 'X', presentation: 'KIT', newProductType: 'Otro' })).status, 403);
+  assert.equal((await a.post('/products', { csrfToken: viewerToken, partNumber: 'Y', description: 'Y', presentation: 'KIT', newSupplier: 'Proveedor' })).status, 403);
+  assert.equal((await a.get('/products/1/edit')).status, 403);
+  assert.equal((await a.get('/products/new')).status, 403);
+});
+
+test('a pre-v1.2 movements table is rebuilt to allow the creation origin without losing history', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'inventory-source-'));
+  const databasePath = join(directory, 'inventory.sqlite');
+  openDatabase(databasePath).close();
+
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE stock_movements_old (
+      id INTEGER PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
+      quantity INTEGER NOT NULL,
+      previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
+      new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
+      presentation TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import'))
+    );
+    DROP TABLE stock_movements;
+    ALTER TABLE stock_movements_old RENAME TO stock_movements;
+    CREATE INDEX stock_movements_product ON stock_movements(product_id, id);
+    INSERT INTO users (username, password_salt, password_hash, role) VALUES ('viejo', 'salt', 'hash', 'admin');
+    INSERT INTO products (part_number, description, presentation) VALUES ('LEGACY', 'Viejo', 'KIT');
+    INSERT INTO stock_movements (product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source)
+      VALUES (1, 1, 'set', 5, 0, 5, 'KIT', 'Inicial', '2026-01-01T00:00:00Z', 'import');
+  `);
+  legacy.close();
+
+  const upgraded = openDatabase(databasePath);
+  t.after(async () => {
+    upgraded.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const movement = upgraded.prepare('SELECT * FROM stock_movements WHERE id = 1').get();
+  assert.equal(movement.source, 'import');
+  assert.equal(movement.new_quantity, 5);
+  upgraded.prepare(`INSERT INTO stock_movements (product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source)
+    VALUES (1, 1, 'set', 2, 5, 7, 'KIT', NULL, '2026-01-02T00:00:00Z', 'creation')`).run();
+  assert.equal(upgraded.prepare("SELECT COUNT(*) AS count FROM stock_movements WHERE source = 'creation'").get().count, 1);
+  assert.equal(upgraded.prepare('PRAGMA foreign_key_check').all().length, 0);
+
+  // Migrating again is a no-op that keeps every row.
+  const again = openDatabase(databasePath);
+  assert.equal(again.prepare('SELECT COUNT(*) AS count FROM stock_movements').get().count, 2);
+  again.close();
 });
 

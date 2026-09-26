@@ -1,4 +1,21 @@
 export const PRESENTATIONS = ['SET', 'KIT', 'unidad'];
+export const MAX_LONG_DESCRIPTION = 2000;
+
+// Dollars typed by the user become integer cents; parsing the string avoids float rounding.
+export function parsePrice(input) {
+  const text = String(input ?? '').trim().replace(',', '.');
+  if (!text) return { cents: null };
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return { error: 'El precio debe ser un número en dólares con hasta dos decimales.' };
+  const [whole, fraction = ''] = text.split('.');
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  if (!Number.isSafeInteger(cents)) return { error: 'El precio supera el máximo permitido.' };
+  return { cents };
+}
+
+export function formatCents(cents) {
+  if (cents === null || cents === undefined) return '';
+  return (cents / 100).toFixed(2);
+}
 
 export function validateProduct(form) {
   const partNumber = (form.get('partNumber') ?? '').trim();
@@ -7,15 +24,26 @@ export function validateProduct(form) {
   const brand = (form.get('brand') ?? '').trim();
   const location = (form.get('location') ?? '').trim();
   const minimumInput = (form.get('minimumStock') ?? '').trim();
+  const longDescription = (form.get('longDescription') ?? '').trim();
+  const priceInput = form.get('price') ?? '';
+  const initialInput = (form.get('initialQuantity') ?? '').trim();
   const product = { partNumber, description, presentation, brand: brand || null,
-    location: location || null, minimumStock: minimumInput === '' ? null : Number(minimumInput) };
+    location: location || null, minimumStock: minimumInput === '' ? null : Number(minimumInput),
+    longDescription: longDescription || null, priceCents: null, initialQuantity: initialInput === '' ? 0 : Number(initialInput) };
   if (!partNumber || partNumber.length > 100) return { error: 'Escribe un P/N de hasta 100 caracteres.', product };
-  if (!description || description.length > 240) return { error: 'Escribe una descripción de hasta 240 caracteres.', product };
+  if (!description || description.length > 240) return { error: 'Escribe un nombre de producto de hasta 240 caracteres.', product };
   if (!PRESENTATIONS.includes(presentation)) return { error: 'Elige una presentación válida: Set, Kit o Unidad.', product };
   if (brand && brand.length > 100) return { error: 'La marca no puede superar los 100 caracteres.', product };
   if (location && location.length > 120) return { error: 'La ubicación no puede superar los 120 caracteres.', product };
   if (minimumInput !== '' && (!Number.isSafeInteger(product.minimumStock) || product.minimumStock < 0)) {
     return { error: 'El mínimo de stock debe ser un número entero igual o mayor que cero.', product };
+  }
+  if (longDescription.length > MAX_LONG_DESCRIPTION) return { error: `La descripción no puede superar los ${MAX_LONG_DESCRIPTION} caracteres.`, product };
+  const price = parsePrice(priceInput);
+  if (price.error) return { error: price.error, product };
+  product.priceCents = price.cents;
+  if (initialInput !== '' && (!Number.isSafeInteger(product.initialQuantity) || product.initialQuantity < 0)) {
+    return { error: 'La cantidad inicial debe ser un número entero igual o mayor que cero.', product };
   }
   return { product };
 }

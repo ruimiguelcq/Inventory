@@ -14,6 +14,8 @@ import {
   insertUser,
   listProducts,
   listCategories,
+  listProductTypes,
+  listSuppliers,
   listPurchaseOrderLines,
   listPurchaseOrders,
   listUsers,
@@ -22,7 +24,7 @@ import {
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, purchaseSelectionPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { catalogState, filterProducts, paginateProducts, validateProduct } from './products.mjs';
+import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { archiveSelection, CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, addSelectionToPurchase, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
@@ -95,18 +97,29 @@ function productFrom(form, previous = {}) {
     brand: form.get('brand') ?? '',
     location: form.get('location') ?? '',
     minimum_stock: form.get('minimumStock') ?? '',
+    long_description: form.get('longDescription') ?? previous.long_description ?? '',
+    price: form.get('price') ?? (previous.price_cents != null ? formatCents(previous.price_cents) : ''),
+    initial_quantity: form.get('initialQuantity') ?? '',
     category_id: form.get('categoryId') ?? previous.category_id ?? '',
     new_category: form.get('newCategory') ?? '',
+    product_type_id: form.get('productTypeId') ?? previous.product_type_id ?? '',
+    new_product_type: form.get('newProductType') ?? '',
+    supplier_id: form.get('supplierId') ?? previous.supplier_id ?? '',
+    new_supplier: form.get('newSupplier') ?? '',
   };
 }
 
-function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400, categories = [] } = {}) {
+function productFormOptions(database) {
+  return { categories: listCategories(database), productTypes: listProductTypes(database), suppliers: listSuppliers(database) };
+}
+
+function sendProductFormError(response, form, session, message, { isNew = true, previousProduct = {}, status = 400, categories = [], productTypes = [], suppliers = [] } = {}) {
   return sendHtml(response, productFormPage({
     ...session,
     product: productFrom(form, previousProduct),
     isNew,
     error: message,
-    categories,
+    categories, productTypes, suppliers,
   }), status);
 }
 
@@ -122,11 +135,11 @@ function saveProduct(database, response, { form, session, product, isNew, existi
     saveCatalogProduct(database, session.userId, product, form, existingProduct);
   } catch (error) {
     if (error instanceof CatalogError) {
-      return sendProductFormError(response, form, session, error.message, { isNew, previousProduct: existingProduct, status: error.status, categories: listCategories(database) });
+      return sendProductFormError(response, form, session, error.message, { isNew, previousProduct: existingProduct, status: error.status, ...productFormOptions(database) });
     }
     if (isUniqueViolation(error)) {
       const message = isNew ? 'Ya existe un repuesto con ese P/N.' : 'Ya existe otro repuesto con ese P/N.';
-      return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409, categories: listCategories(database) });
+      return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409, ...productFormOptions(database) });
     }
     throw error;
   }
@@ -695,7 +708,7 @@ export function createInventoryServer({
       }
 
       if (request.method === 'GET' && url.pathname === '/products/new') {
-        return authenticatedPage(response, productFormPage({ ...session, categories: listCategories(database) }));
+        return authenticatedPage(response, productFormPage({ ...session, ...productFormOptions(database) }));
       }
 
       const stockMatch = url.pathname.match(/^\/products\/(\d+)\/(stock(?:\/confirm)?|history)$/);
@@ -742,7 +755,7 @@ export function createInventoryServer({
         const form = await readForm(request);
         if (!validateCsrf(form, session)) return sendHtml(response, loginPage({ error: 'La sesión caducó. Inicia sesión de nuevo.' }), 403);
         const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error, { categories: listCategories(database) });
+        if (error) return sendProductFormError(response, form, session, error, productFormOptions(database));
         return saveProduct(database, response, { form, session, product, isNew: true });
       }
 
@@ -779,7 +792,7 @@ export function createInventoryServer({
       if (request.method === 'GET' && editMatch) {
         const product = findProduct(database, Number(editMatch[1]));
         if (!product) return sendHtml(response, notFoundPage(session), 404);
-        return authenticatedPage(response, productFormPage({ ...session, product, isNew: false, categories: listCategories(database) }));
+        return authenticatedPage(response, productFormPage({ ...session, product, isNew: false, ...productFormOptions(database) }));
       }
 
       const updateMatch = url.pathname.match(/^\/products\/(\d+)$/);
@@ -795,7 +808,7 @@ export function createInventoryServer({
         const existingProduct = findProduct(database, id);
         if (!existingProduct) return sendHtml(response, notFoundPage(session), 404);
         const { error, product } = validateProduct(form);
-        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct, categories: listCategories(database) });
+        if (error) return sendProductFormError(response, form, session, error, { isNew: false, previousProduct: existingProduct, ...productFormOptions(database) });
         return saveProduct(database, response, { form, session, product, isNew: false, existingProduct });
       }
 

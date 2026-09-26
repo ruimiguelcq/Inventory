@@ -30,21 +30,46 @@ export function openDatabase(databasePath) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'quantity')) {
+  const productColumns = () => database.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
+  if (!productColumns().includes('quantity')) {
     database.exec(`BEGIN IMMEDIATE;
       ALTER TABLE products ADD COLUMN quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0 AND quantity <= 9007199254740991);
       ALTER TABLE products ADD COLUMN stock_version INTEGER NOT NULL DEFAULT 0;
       COMMIT;`);
   }
-  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'archived')) {
+  if (!productColumns().includes('archived')) {
     database.exec('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1));');
   }
   database.exec(`CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
   )`);
-  if (!database.prepare('PRAGMA table_info(products)').all().some((column) => column.name === 'category_id')) {
+  // Product types and suppliers are named lists that grow on save, mirroring categories.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS product_types (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
+    );
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
+    );
+  `);
+  if (!productColumns().includes('category_id')) {
     database.exec('ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)');
+  }
+  // The extended fields stay nullable so pre-v1.2 articles keep their data with no new values.
+  if (!productColumns().includes('long_description')) {
+    database.exec('ALTER TABLE products ADD COLUMN long_description TEXT');
+  }
+  if (!productColumns().includes('price_cents')) {
+    database.exec('ALTER TABLE products ADD COLUMN price_cents INTEGER CHECK (price_cents IS NULL OR price_cents >= 0)');
+  }
+  if (!productColumns().includes('product_type_id')) {
+    database.exec('ALTER TABLE products ADD COLUMN product_type_id INTEGER REFERENCES product_types(id)');
+  }
+  if (!productColumns().includes('supplier_id')) {
+    database.exec('ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)');
   }
   database.exec(`
     CREATE TABLE IF NOT EXISTS stock_movements (
@@ -57,12 +82,15 @@ export function openDatabase(databasePath) {
       new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
       presentation TEXT NOT NULL,
       reason TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))
     );
     CREATE INDEX IF NOT EXISTS stock_movements_product ON stock_movements(product_id, id);
   `);
   if (!database.prepare('PRAGMA table_info(stock_movements)').all().some((column) => column.name === 'source')) {
-    database.exec("ALTER TABLE stock_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import'))");
+    database.exec("ALTER TABLE stock_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))");
+  } else if (!(database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'stock_movements'").get()?.sql ?? '').includes("'creation'")) {
+    rebuildStockMovementsForCreation(database);
   }
   // Purchase drafts live in the same SQLite file as the rest of the state, so the
   // accepted backup/restore ADR already covers them (see docs/adr/0001).
@@ -87,6 +115,38 @@ export function openDatabase(databasePath) {
     CREATE INDEX IF NOT EXISTS purchase_order_lines_order ON purchase_order_lines(purchase_order_id, id);
   `);
   return database;
+}
+
+// SQLite cannot change an existing CHECK constraint, so the early "creation" source
+// needs the whole table rebuilt and its rows copied over.
+function rebuildStockMovementsForCreation(database) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.exec(`
+      CREATE TABLE stock_movements_new (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        operation TEXT NOT NULL CHECK (operation IN ('adjust', 'set')),
+        quantity INTEGER NOT NULL,
+        previous_quantity INTEGER NOT NULL CHECK (previous_quantity >= 0),
+        new_quantity INTEGER NOT NULL CHECK (new_quantity >= 0),
+        presentation TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))
+      );
+      INSERT INTO stock_movements_new (id, product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source)
+        SELECT id, product_id, user_id, operation, quantity, previous_quantity, new_quantity, presentation, reason, created_at, source FROM stock_movements;
+      DROP TABLE stock_movements;
+      ALTER TABLE stock_movements_new RENAME TO stock_movements;
+      CREATE INDEX IF NOT EXISTS stock_movements_product ON stock_movements(product_id, id);
+    `);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function hasAdministrator(database) {
@@ -139,21 +199,33 @@ export function updateUserRole(database, id, role) {
   return database.prepare("UPDATE users SET role = ? WHERE id = ? AND role != 'admin'").run(role, id);
 }
 
+// Products carry the names of their three named lists so the detail view never needs extra queries.
+const PRODUCT_SELECT = `
+  SELECT products.*, categories.name AS category_name,
+    product_types.name AS product_type_name, suppliers.name AS supplier_name
+  FROM products
+  LEFT JOIN categories ON categories.id = products.category_id
+  LEFT JOIN product_types ON product_types.id = products.product_type_id
+  LEFT JOIN suppliers ON suppliers.id = products.supplier_id`;
+
 export function findProduct(database, id) {
-  return database.prepare(`SELECT products.*, categories.name AS category_name
-    FROM products LEFT JOIN categories ON categories.id = products.category_id WHERE products.id = ?`).get(id);
+  return database.prepare(`${PRODUCT_SELECT} WHERE products.id = ?`).get(id);
 }
 
 export function listProducts(database) {
-  return database.prepare(`
-    SELECT products.*, categories.name AS category_name
-    FROM products LEFT JOIN categories ON categories.id = products.category_id
-    ORDER BY part_number COLLATE NOCASE, products.id
-  `).all();
+  return database.prepare(`${PRODUCT_SELECT} ORDER BY part_number COLLATE NOCASE, products.id`).all();
 }
 
 export function listCategories(database) {
   return database.prepare('SELECT id, name FROM categories ORDER BY name COLLATE NOCASE, id').all();
+}
+
+export function listProductTypes(database) {
+  return database.prepare('SELECT id, name FROM product_types ORDER BY name COLLATE NOCASE, id').all();
+}
+
+export function listSuppliers(database) {
+  return database.prepare('SELECT id, name FROM suppliers ORDER BY name COLLATE NOCASE, id').all();
 }
 
 export function insertProduct(database, product) {
@@ -185,6 +257,17 @@ export function updateProduct(database, id, product) {
     product.minimumStock,
     id,
   );
+}
+
+// Extended fields and named-list references live apart from the columnar product write,
+// so import/export can keep touching only the classic columns.
+export function setProductClassification(database, id, { longDescription, priceCents, categoryId, productTypeId, supplierId }) {
+  return database.prepare(`
+    UPDATE products
+    SET long_description = ?, price_cents = ?, category_id = ?, product_type_id = ?, supplier_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(longDescription, priceCents, categoryId, productTypeId, supplierId, id);
 }
 
 export function setProductArchived(database, id, archived) {

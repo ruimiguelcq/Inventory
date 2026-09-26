@@ -1,5 +1,5 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
-import { PRESENTATIONS as presentationValues, stockStatus } from './products.mjs';
+import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, stockStatus } from './products.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, value]);
 
@@ -450,7 +450,11 @@ export function productDetailPage({ product, ...session }) {
       <dl class="product-details">
         <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
         <dt>Existencias</dt><dd>${product.quantity}</dd>
+        <dt>Precio</dt><dd>${product.price_cents == null ? '—' : `$${formatCents(product.price_cents)}`}</dd>
+        <dt>Descripción</dt><dd class="long-description">${product.long_description ? escapeHtml(product.long_description) : '—'}</dd>
         <dt>Categoría</dt><dd>${escapeHtml(product.category_name ?? 'Sin categoría')}</dd>
+        <dt>Tipo de producto</dt><dd>${escapeHtml(product.product_type_name ?? '—')}</dd>
+        <dt>Proveedor</dt><dd>${escapeHtml(product.supplier_name ?? '—')}</dd>
         <dt>Presentación</dt><dd>${escapeHtml(product.presentation)}</dd>
         <dt>Marca</dt><dd>${escapeHtml(product.brand || '—')}</dd>
         <dt>Ubicación</dt><dd>${escapeHtml(product.location || '—')}</dd>
@@ -508,11 +512,12 @@ export function forbiddenPage(session) {
     <a class="button button-secondary" href="/inventory">Volver al inventario</a></section>`, session);
 }
 
-export function productFormPage({ product = {}, categories = [], error = '', isNew = true, ...session }) {
+export function productFormPage({ product = {}, categories = [], productTypes = [], suppliers = [], error = '', isNew = true, ...session }) {
   const presentationOptions = `
     <option value="" disabled ${product.presentation ? '' : 'selected'}>Selecciona una presentación</option>
     ${PRESENTATIONS.map(([value, label]) => `<option value="${value}" ${product.presentation === value ? 'selected' : ''}>${label}</option>`).join('')}
   `;
+  const priceValue = product.price ?? (product.price_cents != null ? formatCents(product.price_cents) : '');
   const action = isNew ? '/products' : `/products/${product.id}`;
   const title = isNew ? 'Añadir repuesto' : 'Editar repuesto';
   const content = `
@@ -526,24 +531,36 @@ export function productFormPage({ product = {}, categories = [], error = '', isN
       ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
       <section class="form-section">
         <h2>Identificación</h2>
-        <p class="form-hint">El P/N identifica una presentación vendible.</p>
+        <p class="form-hint">P/N, Producto y Presentación son obligatorios. El estado por defecto es Activo.</p>
         <div class="form-grid">
           <div class="field field-wide">
             <label for="partNumber">P/N <span class="required-mark">Obligatorio</span></label>
             <input id="partNumber" name="partNumber" value="${escapeHtml(product.part_number ?? '')}" maxlength="100" required>
           </div>
           <div class="field field-wide">
-            <label for="description">Descripción <span class="required-mark">Obligatoria</span></label>
+            <label for="description">Producto <span class="required-mark">Obligatorio</span></label>
             <input id="description" name="description" value="${escapeHtml(product.description ?? '')}" maxlength="240" required>
+          </div>
+          <div class="field field-wide">
+            <label for="longDescription">Descripción <span class="optional-mark">Opcional</span></label>
+            <textarea id="longDescription" name="longDescription" rows="4" maxlength="${MAX_LONG_DESCRIPTION}">${escapeHtml(product.long_description ?? '')}</textarea>
+            <p class="form-hint">Texto plano para detalles más allá del nombre.</p>
           </div>
           <div class="field">
             <label for="presentation">Presentación</label>
             <select id="presentation" name="presentation" required>${presentationOptions}</select>
           </div>
           <div class="field">
-            <label for="brand">Marca <span class="optional-mark">Opcional</span></label>
-            <input id="brand" name="brand" value="${escapeHtml(product.brand ?? '')}" maxlength="100">
+            <label for="price">Precio (USD) <span class="optional-mark">Opcional</span></label>
+            <input id="price" name="price" inputmode="decimal" value="${escapeHtml(priceValue)}" placeholder="0.00">
+            <p class="form-hint">Dólares con dos decimales.</p>
           </div>
+        </div>
+      </section>
+      <section class="form-section">
+        <h2>Clasificación</h2>
+        <p class="form-hint">Las listas crecen al guardar: elige una existente o escribe una nueva.</p>
+        <div class="form-grid">
           <div class="field">
             <label for="categoryId">Categoría <span class="optional-mark">Opcional</span></label>
             <select id="categoryId" name="categoryId">
@@ -555,6 +572,34 @@ export function productFormPage({ product = {}, categories = [], error = '', isN
             <label for="newCategory">Crear categoría</label>
             <input id="newCategory" name="newCategory" value="${escapeHtml(product.new_category ?? '')}" maxlength="100" aria-describedby="category-help">
             <p id="category-help" class="form-hint">Elige Sin categoría para crear y asignar una nueva al guardar.</p>
+          </div>
+          <div class="field">
+            <label for="productTypeId">Tipo de producto <span class="optional-mark">Opcional</span></label>
+            <select id="productTypeId" name="productTypeId">
+              <option value="">Sin tipo</option>
+              ${productTypes.map((type) => `<option value="${type.id}" ${String(product.product_type_id) === String(type.id) ? 'selected' : ''}>${escapeHtml(type.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="newProductType">Crear tipo de producto</label>
+            <input id="newProductType" name="newProductType" value="${escapeHtml(product.new_product_type ?? '')}" maxlength="100">
+            <p class="form-hint">Elige Sin tipo para crear y asignar uno nuevo al guardar.</p>
+          </div>
+          <div class="field">
+            <label for="supplierId">Proveedor <span class="optional-mark">Opcional</span></label>
+            <select id="supplierId" name="supplierId">
+              <option value="">Sin proveedor</option>
+              ${suppliers.map((supplier) => `<option value="${supplier.id}" ${String(product.supplier_id) === String(supplier.id) ? 'selected' : ''}>${escapeHtml(supplier.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="newSupplier">Crear proveedor</label>
+            <input id="newSupplier" name="newSupplier" value="${escapeHtml(product.new_supplier ?? '')}" maxlength="100">
+            <p class="form-hint">Elige Sin proveedor para crear y asignar uno nuevo al guardar.</p>
+          </div>
+          <div class="field">
+            <label for="brand">Marca <span class="optional-mark">Opcional</span></label>
+            <input id="brand" name="brand" value="${escapeHtml(product.brand ?? '')}" maxlength="100">
           </div>
         </div>
       </section>
@@ -570,6 +615,11 @@ export function productFormPage({ product = {}, categories = [], error = '', isN
             <label for="minimumStock">Mínimo de stock <span class="optional-mark">Opcional</span></label>
             <input id="minimumStock" name="minimumStock" type="number" min="0" step="1" value="${escapeHtml(product.minimum_stock ?? '')}">
           </div>
+          ${isNew ? `<div class="field">
+            <label for="initialQuantity">Cantidad inicial <span class="optional-mark">Opcional</span></label>
+            <input id="initialQuantity" name="initialQuantity" type="number" min="0" step="1" value="${escapeHtml(product.initial_quantity ?? '')}">
+            <p class="form-hint">Se registra en el historial como movimiento de alta.</p>
+          </div>` : ''}
         </div>
       </section>
       <div class="form-actions">
@@ -640,7 +690,7 @@ export function historyPage({ product, movements, ...session }) {
         <td>${escapeHtml(movement.username)}</td><td>${movement.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'}</td>
         <td>${movement.quantity}</td><td>${movement.previous_quantity}</td><td>${movement.new_quantity}</td>
          <td>${escapeHtml(movement.presentation)}</td><td>${escapeHtml(movement.reason || '—')}</td>
-         <td>${movement.source === 'import' ? 'Importación Excel' : 'Manual'}</td>
+         <td>${movement.source === 'creation' ? 'Alta' : movement.source === 'import' ? 'Importación Excel' : 'Manual'}</td>
       </tr>`).join('')}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay movimientos.</p></div>'}
     </section>`, session);
 }
