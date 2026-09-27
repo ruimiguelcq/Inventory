@@ -165,6 +165,7 @@ function isUniqueViolation(error, target) {
 // The customer form carries the principal contact plus two fixed extra slots; empty slots drop out.
 function customerFrom(form, previous = {}) {
   return {
+    ...previous,
     name: form.get('name') ?? previous.name ?? '',
     last_name: form.get('lastName') ?? previous.last_name ?? '',
     tax_id: form.get('taxId') ?? previous.tax_id ?? '',

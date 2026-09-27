@@ -133,6 +133,17 @@ test('los huecos adicionales vacíos no se guardan', async (t) => {
   } finally { db.close(); }
 });
 
+test('una edición inválida vuelve a mostrar el formulario de ese cliente', async (t) => {
+  const a = await app(t);
+  await a.post('/customers', base(a, { taxId: 'V-1' }));
+  const invalid = await a.post('/customers/1', base(a, { name: '', taxId: 'V-1' }));
+  assert.equal(invalid.status, 400);
+  const html = await invalid.text();
+  assert.match(html, /nombre de cliente/);
+  assert.match(html, /action="\/customers\/1"/);
+  assert.doesNotMatch(html, /customers\/undefined/);
+});
+
 test('editar un cliente reemplaza sus correos y teléfonos', async (t) => {
   const a = await app(t);
   await a.post('/customers', base(a, { taxId: 'V-1', email: 'a@x.com', emailExtra1: 'b@x.com', phone: '1', phoneExtra1: '2' }));
