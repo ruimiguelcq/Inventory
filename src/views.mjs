@@ -1,5 +1,6 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
 import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
+import { DEFAULT_LANGUAGE, LANGUAGES, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_TAX_ID, customerName } from './customers.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
@@ -48,6 +49,7 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
     </header>
     <aside class="sidebar"><nav aria-label="Navegación principal">
       ${[['products', '/products', 'Productos'], ['inventory', '/inventory', 'Inventario'], ['purchases', '/purchase-orders', 'Órdenes de compra']].map(([key, href, label]) => `<a class="sidebar-link ${key !== 'products' ? 'sidebar-child' : ''} ${active === key ? 'is-active' : ''}" href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}
+      <a class="sidebar-link ${active === 'customers' ? 'is-active' : ''}" href="/customers" ${active === 'customers' ? 'aria-current="page"' : ''}>Clientes</a>
       ${role === 'admin' ? `<hr class="sidebar-rule">
       <a class="sidebar-link ${active === 'users' ? 'is-active' : ''}" href="/users" ${active === 'users' ? 'aria-current="page"' : ''}>Cuentas y permisos</a>
       <a class="sidebar-link ${active === 'backups' ? 'is-active' : ''}" href="/backups" ${active === 'backups' ? 'aria-current="page"' : ''}>Copias de seguridad</a>` : ''}
@@ -631,6 +633,126 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
       </div>
     </form>`;
   return page(title, content, { ...session, active: 'products' });
+}
+
+// Customer directory. The list lands the section; search and pagination arrive with their own ticket.
+export function customersPage({ customers = [], message = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const addButton = canManage ? '<a class="button button-primary" href="/customers/new">Agregar cliente</a>' : '';
+  const rows = customers.map((customer) => `<tr>
+    <td class="align-left"><a class="product-description" href="/customers/${customer.id}">${escapeHtml(customerName(customer))}</a></td>
+  </tr>`).join('');
+  const content = `
+    <div class="page-heading">
+      <div><h1>Clientes</h1></div>
+      <div class="form-actions">${addButton}</div>
+    </div>
+    <section class="inventory-panel" aria-label="Lista de clientes">
+      ${customers.length ? `<div class="table-scroll"><table>
+        <thead><tr><th scope="col" class="align-left">Nombre del cliente</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`
+        : `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+          <h3>Todavía no hay clientes</h3>
+          <p>${canManage ? 'Añade el primer cliente con su RIF / Cédula y sus datos de contacto.' : 'Cuando Gestión cree un cliente, aparecerá aquí.'}</p>
+          ${addButton}</div>`}
+    </section>`;
+  return page('Clientes', content, { ...session, active: 'customers', message });
+}
+
+// The principal email and phone are required; extra contacts live behind "Datos adicionales".
+export function customerFormPage({ customer = {}, error = '', isNew = true, ...session }) {
+  const emails = customer.emails ?? [];
+  const phones = customer.phones ?? [];
+  const action = isNew ? '/customers' : `/customers/${customer.id}`;
+  const title = isNew ? 'Nuevo cliente' : 'Editar cliente';
+  const required = '<span class="required-mark">Obligatorio</span>';
+  const optional = '<span class="optional-mark">Opcional</span>';
+  const hasExtras = Boolean(emails[1] || emails[2] || phones[1] || phones[2]);
+  const content = `
+    <div class="breadcrumb"><a href="/customers">Clientes</a><span aria-hidden="true">/</span><span>${title}</span></div>
+    <div class="page-heading form-heading"><div><p class="eyebrow">Ficha del cliente</p><h1>${title}</h1></div></div>
+    <form class="product-form product-form--split" method="post" action="${action}">
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      <div class="product-layout">
+        <div class="product-layout__main">
+          <section class="form-section form-card">
+            <h2>Descripción general del cliente</h2>
+            <div class="form-grid">
+              <div class="field"><label for="name">Nombre ${required}</label>
+                <input id="name" name="name" value="${escapeHtml(customer.name ?? '')}" maxlength="${MAX_NAME}" required></div>
+              <div class="field"><label for="lastName">Apellido ${optional}</label>
+                <input id="lastName" name="lastName" value="${escapeHtml(customer.last_name ?? '')}" maxlength="${MAX_NAME}"></div>
+              <div class="field field-wide"><label for="language">Idioma</label>
+                <select id="language" name="language">
+                  ${LANGUAGES.map(([value, label]) => `<option value="${value}" ${(customer.language ?? DEFAULT_LANGUAGE) === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                </select></div>
+              <div class="field"><label for="email">Correo electrónico ${required}</label>
+                <input id="email" name="email" type="email" value="${escapeHtml(emails[0] ?? '')}" maxlength="${MAX_EMAIL}" required></div>
+              <div class="field"><label for="phone">Número de teléfono ${required}</label>
+                <input id="phone" name="phone" value="${escapeHtml(phones[0] ?? '')}" maxlength="${MAX_PHONE}" placeholder="+58 412 000 0000" required></div>
+            </div>
+            <details class="price-extra"${hasExtras ? ' open' : ''}>
+              <summary>Datos adicionales</summary>
+              <p class="form-hint">Hasta 3 correos y 3 teléfonos en total, con el principal primero. Deja un campo vacío para no guardarlo.</p>
+              <div class="form-grid">
+                <div class="field"><label for="emailExtra1">Correo adicional</label>
+                  <input id="emailExtra1" name="emailExtra1" type="email" value="${escapeHtml(emails[1] ?? '')}" maxlength="${MAX_EMAIL}"></div>
+                <div class="field"><label for="emailExtra2">Correo adicional</label>
+                  <input id="emailExtra2" name="emailExtra2" type="email" value="${escapeHtml(emails[2] ?? '')}" maxlength="${MAX_EMAIL}"></div>
+                <div class="field"><label for="phoneExtra1">Teléfono adicional</label>
+                  <input id="phoneExtra1" name="phoneExtra1" value="${escapeHtml(phones[1] ?? '')}" maxlength="${MAX_PHONE}"></div>
+                <div class="field"><label for="phoneExtra2">Teléfono adicional</label>
+                  <input id="phoneExtra2" name="phoneExtra2" value="${escapeHtml(phones[2] ?? '')}" maxlength="${MAX_PHONE}"></div>
+              </div>
+            </details>
+          </section>
+          <div class="form-actions">
+            <a class="button button-secondary" href="/customers">Cancelar</a>
+            <button class="button button-primary" type="submit">Guardar cliente</button>
+          </div>
+        </div>
+        <aside class="product-layout__side">
+          <section class="form-section form-card">
+            <h2>Notas</h2>
+            <p class="form-hint">Las notas son privadas y no se comparten con el cliente.</p>
+            <div class="field"><label class="visually-hidden" for="notes">Notas</label>
+              <textarea id="notes" name="notes" rows="5" maxlength="${MAX_NOTES}" placeholder="Notas internas">${escapeHtml(customer.notes ?? '')}</textarea></div>
+          </section>
+          <section class="form-section form-card">
+            <h2>Información fiscal</h2>
+            <div class="field"><label for="taxId">RIF / Cédula ${required}</label>
+              <input id="taxId" name="taxId" value="${escapeHtml(customer.tax_id ?? '')}" maxlength="${MAX_TAX_ID}" placeholder="V-12345678-9" required>
+              <p class="form-hint">Identifica al cliente y evita duplicados.</p></div>
+          </section>
+        </aside>
+      </div>
+    </form>`;
+  return page(title, content, { ...session, active: 'customers' });
+}
+
+export function customerDetailPage({ customer, message = '', ...session }) {
+  const emails = customer.emails ?? [];
+  const phones = customer.phones ?? [];
+  const contacts = (values) => values.length
+    ? values.map((value, index) => `${escapeHtml(value)}${index === 0 ? ' <span class="presentation-tag">Principal</span>' : ''}`).join('<br>')
+    : '—';
+  const content = `
+    <div class="breadcrumb"><a href="/customers">Clientes</a><span aria-hidden="true">/</span><span>Ficha del cliente</span></div>
+    <div class="page-heading"><h1>${escapeHtml(customerName(customer))}</h1>
+      ${canManageInventory(session.role) ? `<a class="button button-primary" href="/customers/${customer.id}/edit">Editar cliente</a>` : ''}</div>
+    <section class="product-form form-section">
+      <dl class="product-details">
+        <dt>Nombre</dt><dd>${escapeHtml(customer.name)}</dd>
+        <dt>Apellido</dt><dd>${escapeHtml(customer.last_name || '—')}</dd>
+        <dt>Idioma</dt><dd>Español</dd>
+        <dt>Correo electrónico</dt><dd>${contacts(emails)}</dd>
+        <dt>Número de teléfono</dt><dd>${contacts(phones)}</dd>
+        <dt>Notas</dt><dd class="long-description">${customer.notes ? escapeHtml(customer.notes) : '—'}</dd>
+        <dt>RIF / Cédula</dt><dd>${escapeHtml(customer.tax_id)}</dd>
+      </dl>
+    </section>`;
+  return page(customerName(customer), content, { ...session, active: 'customers', message });
 }
 
 export function notFoundPage(session = {}) {

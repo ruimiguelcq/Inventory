@@ -6,12 +6,16 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   createAdministrator,
+  findCustomer,
   findUser,
   findProduct,
   findPurchaseOrder,
   findUserByUsername,
   hasAdministrator,
   insertUser,
+  listCustomerEmails,
+  listCustomerPhones,
+  listCustomers,
   listProducts,
   listCategories,
   listProductTypes,
@@ -23,7 +27,8 @@ import {
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { accountsPage, customerDetailPage, customerFormPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { CustomerError, EMAIL_FIELDS, PHONE_FIELDS, saveCustomer, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
@@ -153,8 +158,30 @@ function sendProductFormError(response, form, session, message, { isNew = true, 
   }), status);
 }
 
-function isUniqueViolation(error) {
-  return error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: products\.part_number/i.test(error.message);
+function isUniqueViolation(error, target) {
+  return error.code === 'ERR_SQLITE_ERROR' && error.message.includes(`UNIQUE constraint failed: ${target}`);
+}
+
+// The customer form carries the principal contact plus two fixed extra slots; empty slots drop out.
+function customerFrom(form, previous = {}) {
+  return {
+    name: form.get('name') ?? previous.name ?? '',
+    last_name: form.get('lastName') ?? previous.last_name ?? '',
+    tax_id: form.get('taxId') ?? previous.tax_id ?? '',
+    language: form.get('language') ?? previous.language ?? 'es',
+    notes: form.get('notes') ?? previous.notes ?? '',
+    emails: EMAIL_FIELDS.map((field) => (form.get(field) ?? '').trim()),
+    phones: PHONE_FIELDS.map((field) => (form.get(field) ?? '').trim()),
+  };
+}
+
+function customerView(database, row) {
+  if (!row) return null;
+  return { ...row, emails: listCustomerEmails(database, row.id), phones: listCustomerPhones(database, row.id) };
+}
+
+function sendCustomerFormError(response, form, session, message, { isNew = true, previous = {}, status = 400 } = {}) {
+  return sendHtml(response, customerFormPage({ ...session, customer: customerFrom(form, previous), isNew, error: message }), status);
 }
 
 function saveProduct(database, response, { form, session, product, isNew, existingProduct, image = null, removeImage = false, imageDirectory }) {
@@ -167,7 +194,7 @@ function saveProduct(database, response, { form, session, product, isNew, existi
     if (error instanceof CatalogError) {
       return sendProductFormError(response, form, session, error.message, { isNew, previousProduct: existingProduct, status: error.status, ...productFormOptions(database) });
     }
-    if (isUniqueViolation(error)) {
+    if (isUniqueViolation(error, 'products.part_number')) {
       const message = isNew ? 'Ya existe un repuesto con ese P/N.' : 'Ya existe otro repuesto con ese P/N.';
       return sendProductFormError(response, form, session, message, { isNew, previousProduct: existingProduct, status: 409, ...productFormOptions(database) });
     }
@@ -192,6 +219,26 @@ async function saveProductFromRequest(database, response, { request, session, id
     form, session, product, isNew, existingProduct, image: upload.image,
     removeImage: form.get('removeImage') === 'on', imageDirectory,
   });
+}
+
+// Both customer write routes share the CSRF check, validation and duplicate-RIF handling.
+async function saveCustomerFromRequest(database, response, { request, session, existing = null }) {
+  const form = await readForm(request);
+  if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+  const user = findUser(database, session.userId);
+  if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+  const isNew = !existing;
+  const previous = existing ?? {};
+  const { error, customer } = validateCustomer(form);
+  if (error) return sendCustomerFormError(response, form, session, error, { isNew, previous });
+  try {
+    const id = saveCustomer(database, session.userId, customer, existing);
+    return redirect(response, `/customers/${id}?saved=1`);
+  } catch (thrown) {
+    if (thrown instanceof CustomerError) return sendCustomerFormError(response, form, session, thrown.message, { isNew, previous, status: thrown.status });
+    if (isUniqueViolation(thrown, 'customers.tax_id')) return sendCustomerFormError(response, form, session, 'Ya existe un cliente con ese RIF / Cédula.', { isNew, previous, status: 409 });
+    throw thrown;
+  }
 }
 
 function createSession(sessions, user) {
@@ -437,7 +484,7 @@ export function createInventoryServer({
       }
 
       // Every private mutation requires gestión, including future stock/archive routes.
-      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname))) {
+      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname) || url.pathname === '/customers/new' || /^\/customers\/\d+\/edit$/.test(url.pathname))) {
         return sendHtml(response, forbiddenPage(session), 403);
       }
 
@@ -631,6 +678,36 @@ export function createInventoryServer({
             if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
             return renderPurchase({ values: Object.fromEntries(form), error: error.message });
           }
+        }
+      }
+
+      const customerEditMatch = url.pathname.match(/^\/customers\/(\d+)\/edit$/);
+      const customerMatch = url.pathname.match(/^\/customers\/(\d+)$/);
+      if (url.pathname === '/customers' || url.pathname === '/customers/new' || customerMatch || customerEditMatch) {
+        if (request.method === 'GET' && url.pathname === '/customers') {
+          return sendHtml(response, customersPage({ ...session, customers: listCustomers(database) }));
+        }
+        if (request.method === 'GET' && url.pathname === '/customers/new') {
+          return sendHtml(response, customerFormPage({ ...session }));
+        }
+        if (request.method === 'POST' && url.pathname === '/customers') {
+          return await saveCustomerFromRequest(database, response, { request, session, existing: null });
+        }
+        const existing = customerMatch ? findCustomer(database, Number(customerMatch[1])) : null;
+        if (customerMatch && !existing) return sendHtml(response, notFoundPage(session), 404);
+        if (request.method === 'GET' && customerEditMatch) {
+          const row = findCustomer(database, Number(customerEditMatch[1]));
+          if (!row) return sendHtml(response, notFoundPage(session), 404);
+          return sendHtml(response, customerFormPage({ ...session, customer: customerView(database, row), isNew: false }));
+        }
+        if (request.method === 'GET' && customerMatch) {
+          return sendHtml(response, customerDetailPage({
+            ...session, customer: customerView(database, existing),
+            message: url.searchParams.get('saved') === '1' ? 'Cliente guardado.' : '',
+          }));
+        }
+        if (request.method === 'POST' && customerMatch) {
+          return await saveCustomerFromRequest(database, response, { request, session, existing });
         }
       }
 

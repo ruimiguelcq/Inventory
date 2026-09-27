@@ -141,6 +141,37 @@ export function openDatabase(databasePath) {
 
     CREATE INDEX IF NOT EXISTS purchase_order_lines_order ON purchase_order_lines(purchase_order_id, id);
   `);
+  // Customers are a standalone directory: contact emails and phones plus the RIF/Cédula that
+  // identifies them uniquely. They carry no stock or orders, so no product relation is added.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+      last_name TEXT,
+      language TEXT NOT NULL DEFAULT 'es' CHECK (language = 'es'),
+      notes TEXT,
+      tax_id TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(tax_id)) BETWEEN 1 AND 20),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_emails (
+      id INTEGER PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_phones (
+      id INTEGER PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      phone TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS customer_emails_customer ON customer_emails(customer_id, position, id);
+    CREATE INDEX IF NOT EXISTS customer_phones_customer ON customer_phones(customer_id, position, id);
+  `);
   return database;
 }
 
@@ -367,4 +398,48 @@ export function touchPurchaseOrder(database, id) {
 
 export function setPurchaseOrderStatus(database, id, status) {
   return database.prepare('UPDATE purchase_orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, id);
+}
+
+export function insertCustomer(database, { name, lastName, language, notes, taxId }) {
+  return database.prepare(`
+    INSERT INTO customers (name, last_name, language, notes, tax_id) VALUES (?, ?, ?, ?, ?)
+  `).run(name, lastName, language, notes, taxId);
+}
+
+export function updateCustomer(database, id, { name, lastName, language, notes, taxId }) {
+  return database.prepare(`
+    UPDATE customers SET name = ?, last_name = ?, language = ?, notes = ?, tax_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(name, lastName, language, notes, taxId, id);
+}
+
+export function findCustomer(database, id) {
+  return database.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+}
+
+// The RIF/Cédula is the customer identity; SQLite NOCASE folds ASCII so V-1 and v-1 collide.
+export function findCustomerByTaxId(database, taxId) {
+  return database.prepare('SELECT * FROM customers WHERE tax_id = ? COLLATE NOCASE').get(taxId);
+}
+
+export function listCustomers(database) {
+  return database.prepare('SELECT * FROM customers ORDER BY name COLLATE NOCASE, last_name COLLATE NOCASE, id').all();
+}
+
+export function listCustomerEmails(database, customerId) {
+  return database.prepare('SELECT email FROM customer_emails WHERE customer_id = ? ORDER BY position, id').all(customerId).map((row) => row.email);
+}
+
+export function listCustomerPhones(database, customerId) {
+  return database.prepare('SELECT phone FROM customer_phones WHERE customer_id = ? ORDER BY position, id').all(customerId).map((row) => row.phone);
+}
+
+// Saving the customer rewrites both contact lists in order, so the first is always the principal.
+export function replaceCustomerContacts(database, customerId, emails, phones) {
+  database.prepare('DELETE FROM customer_emails WHERE customer_id = ?').run(customerId);
+  database.prepare('DELETE FROM customer_phones WHERE customer_id = ?').run(customerId);
+  const insertEmail = database.prepare('INSERT INTO customer_emails (customer_id, email, position) VALUES (?, ?, ?)');
+  emails.forEach((email, position) => insertEmail.run(customerId, email, position));
+  const insertPhone = database.prepare('INSERT INTO customer_phones (customer_id, phone, position) VALUES (?, ?, ?)');
+  phones.forEach((phone, position) => insertPhone.run(customerId, phone, position));
 }
