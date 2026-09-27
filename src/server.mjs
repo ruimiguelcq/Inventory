@@ -28,13 +28,13 @@ import {
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, customerDetailPage, customerFormPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { addressFromForm, CustomerError, EMAIL_FIELDS, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
+import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
-import { readImportForm, previewImport, applyImport, ImportError, parseImportView } from './imports.mjs';
-import { exportPurchaseOrder, exportView, parseExportView, selectExportProducts, ExportError } from './exports.mjs';
+import { readImportForm, previewImport, previewCustomerImport, applyImport, applyCustomerImport, ImportError, parseImportView } from './imports.mjs';
+import { exportCustomers, exportPurchaseOrder, exportView, parseExportView, selectExportCustomers, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
@@ -352,6 +352,20 @@ export function createInventoryServer({
     };
   }
 
+  function customerOptions(params) {
+    // The customer directory searches by name only and pages at a fixed 50.
+    const query = (params.get('q') ?? '').trim();
+    const queryParams = new URLSearchParams();
+    if (query) queryParams.set('q', query);
+    const page = params.get('page');
+    if (page) queryParams.set('page', page);
+    return {
+      ...paginateCustomers(filterCustomers(listCustomers(database), queryParams), queryParams),
+      filters: { q: query },
+      queryParams,
+    };
+  }
+
   function runAutomaticBackup() {
     try {
       createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
@@ -468,6 +482,17 @@ export function createInventoryServer({
         let view = 'inventory';
         try {
           view = parseExportView(params);
+          if (view === 'customers') {
+            const customers = listCustomers(database).map((row) => customerView(database, row));
+            const buffer = await exportCustomers(selectExportCustomers(customers, params));
+            response.writeHead(200, {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': 'attachment; filename="clientes.xlsx"',
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            });
+            return response.end(buffer);
+          }
           const viewParams = new URLSearchParams(params);
           // Inventory only ever exports active articles; products honors its state filter.
           if (view === 'inventory') viewParams.set('state', 'active');
@@ -482,6 +507,9 @@ export function createInventoryServer({
           return response.end(buffer);
         } catch (error) {
           if (!(error instanceof ExportError)) throw error;
+          if (view === 'customers') {
+            return sendHtml(response, customersPage({ ...session, ...customerOptions(params), message: error.message }), 400);
+          }
           const render = view === 'products' ? productsPage : inventoryPage;
           const fallback = new URLSearchParams(params);
           return sendHtml(response, render({ ...session, ...catalogOptions(fallback, view === 'inventory'), message: error.message }), 400);
@@ -690,7 +718,8 @@ export function createInventoryServer({
       const customerMatch = url.pathname.match(/^\/customers\/(\d+)$/);
       if (url.pathname === '/customers' || url.pathname === '/customers/new' || customerMatch || customerEditMatch) {
         if (request.method === 'GET' && url.pathname === '/customers') {
-          return sendHtml(response, customersPage({ ...session, customers: listCustomers(database) }));
+          const message = url.searchParams.get('imported') === '1' ? 'Importación aplicada.' : '';
+          return sendHtml(response, customersPage({ ...session, ...customerOptions(url.searchParams), message }));
         }
         if (request.method === 'GET' && url.pathname === '/customers/new') {
           return sendHtml(response, customerFormPage({ ...session }));
@@ -740,7 +769,8 @@ export function createInventoryServer({
         const storedSession = sessions.get(session.id);
         if (request.method === 'GET' && url.pathname === '/imports') {
           try {
-            return sendHtml(response, importPage({ ...session, view: parseImportView(url.searchParams) }));
+            const view = parseImportView(url.searchParams);
+            return sendHtml(response, view === 'customers' ? customerImportPage({ ...session }) : importPage({ ...session, view }));
           } catch (error) {
             if (!(error instanceof ImportError)) throw error;
             return sendHtml(response, importPage({ ...session, error: error.message }), error.status);
@@ -757,31 +787,35 @@ export function createInventoryServer({
             if (url.pathname === '/imports/cancel') {
               storedSession.importGeneration = (storedSession.importGeneration ?? 0) + 1;
               delete storedSession.importReview;
-              return redirect(response, view === 'products' ? '/products' : '/inventory');
+              return redirect(response, view === 'customers' ? '/customers' : view === 'products' ? '/products' : '/inventory');
             }
             if (url.pathname === '/imports') {
               if ((storedSession.importGeneration ?? 0) !== initialGeneration) throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
               const generation = initialGeneration + 1;
               storedSession.importGeneration = generation;
-              const review = await previewImport(database, form, view);
+              const review = view === 'customers' ? await previewCustomerImport(database, form) : await previewImport(database, form, view);
               if (storedSession.importGeneration !== generation || sessions.get(session.id) !== storedSession) {
                 throw new ImportError('La carga fue cancelada o sustituida. Revisa de nuevo el archivo.', 409);
               }
               if (!canManageInventory(findUser(database, session.userId)?.role)) return sendHtml(response, forbiddenPage(session), 403);
               const confirmationToken = randomBytes(32).toString('base64url');
               if (!review.rows.some((row) => row.errors.length)) storedSession.importReview = { review, confirmationToken };
-              return sendHtml(response, importPage({ ...session, review, confirmationToken, view }));
+              return sendHtml(response, view === 'customers' ? customerImportPage({ ...session, review, confirmationToken }) : importPage({ ...session, review, confirmationToken, view }));
             }
             const pending = storedSession.importReview;
             if (!pending || !matchesToken(form.get('confirmationToken') ?? '', pending.confirmationToken)) {
               throw new ImportError('Revisa de nuevo el archivo antes de confirmar.', 409);
             }
             delete storedSession.importReview;
+            if (pending.review.view === 'customers') {
+              applyCustomerImport(database, session.userId, pending.review);
+              return redirect(response, '/customers?imported=1');
+            }
             applyImport(database, session.userId, pending.review);
             return redirect(response, pending.review.view === 'products' ? '/products?imported=1' : '/inventory?imported=1');
           } catch (error) {
             if (!(error instanceof ImportError)) throw error;
-            return sendHtml(response, importPage({ ...session, view, error: error.message }), error.status);
+            return sendHtml(response, view === 'customers' ? customerImportPage({ ...session, error: error.message }) : importPage({ ...session, view, error: error.message }), error.status);
           }
         }
       }
