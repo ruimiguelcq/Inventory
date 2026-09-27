@@ -281,7 +281,7 @@ test('desktop sections, product details and management links respect every role 
     const detail = await a.get('/products/1');
     assert.equal(detail.status, 200);
     const html = await detail.text();
-    assert.match(html, /Existencias<\/dt><dd>0/);
+    assert.match(html, /Inventario<\/dt><dd>0/);
     assert.match(html, /href="\/products\/1\/history"/);
     assert.equal(html.includes('Editar producto'), role !== 'viewer');
     assert.equal(html.includes('Ajustar inventario'), role !== 'viewer');
@@ -474,7 +474,7 @@ test('categories and assignments survive restart and a verified full-state backu
   assert.equal((await a.post('/backups/restore', { csrfToken: a.csrfToken, file, confirmationToken: a.token(confirmation, 'confirmationToken') })).status, 303);
   assert.match(await (await a.get('/products/1')).text(), /Categoría<\/dt><dd>Motor/);
   assert.doesNotMatch(await (await a.get('/products/new')).text(), /Posterior/);
-  assert.match(await (await a.get('/products/3')).text(), /Existencias<\/dt><dd>2/);
+  assert.match(await (await a.get('/products/3')).text(), /Inventario<\/dt><dd>2/);
   assert.doesNotMatch(await (await a.get('/products/3/history')).text(), /<td>2<\/td><td>9<\/td>/);
 });
 

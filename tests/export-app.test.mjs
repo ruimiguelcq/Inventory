@@ -212,7 +212,7 @@ test('an exported catalog can be reimported with categories and quantities, with
   })).status, 303);
   const detail = await (await target.get('/products/1')).text();
   assert.match(detail, /Categoría<\/dt><dd>Motor/);
-  assert.match(detail, /Existencias<\/dt><dd>7/);
+  assert.match(detail, /Inventario<\/dt><dd>7/);
   assert.match(detail, /Junta con retén de repuesto/);
   assert.match(detail, /Tipo de producto<\/dt><dd>Repuesto/);
   assert.match(detail, /Proveedor<\/dt><dd>Marino S\.A\./);

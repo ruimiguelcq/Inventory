@@ -479,7 +479,7 @@ test('Inventario saves a Disponible adjustment in one step and records it in the
   assert.equal(applied.status, 303);
   assert.equal(applied.headers.get('location'), '/inventory?msg=stocked');
   const inventory = await readPage('/inventory?msg=stocked');
-  assert.match(inventory, /Existencias actualizadas\./);
+  assert.match(inventory, /Inventario actualizado\./);
   assert.match(inventory, /class="quantity-cell inventory-ok"[^>]*>\s*<a class="stock-value"[^>]*>7<\/a>/);
   const history = await readPage('/products/1/history');
   assert.match(history, /&lt;Recuento inline&gt;/);

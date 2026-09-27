@@ -69,7 +69,7 @@ test('the catalog import creates and updates articles with their category and op
   assert.equal((await a.post('/imports/confirm', fields)).status, 409);
   const detail = await (await a.get('/products/1')).text();
   assert.match(detail, /Categoría<\/dt><dd>Juntas/);
-  assert.match(detail, /Existencias<\/dt><dd>5/);
+  assert.match(detail, /Inventario<\/dt><dd>5/);
   const history = await (await a.get('/products/1/history')).text();
   assert.match(history, /<td>admin<\/td>/);
   assert.match(history, /Importación Excel/);

@@ -141,7 +141,7 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
   const exportHref = `/exports?${exportParams.toString()}`;
 
   // Inventory edits the read-only-to-viewers Disponible number in place; Products keeps its
-  // read-only `N existencias` cell coloured by the product minimum.
+  // read-only stock cell coloured by the product minimum.
   const stockCell = (product) => {
     const level = `quantity-cell inventory-${inventoryLevel(product)}`;
     if (!canManage) return `<td class="${level}">${product.quantity}</td>`;
@@ -353,7 +353,7 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
   }).join('');
 
   const table = lines.length ? `<div class="table-scroll"><table><thead><tr>
-      <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Existencias</th>
+      <th scope="col">P/N</th><th scope="col">Nombre</th><th scope="col" class="align-right">Inventario</th>
       <th scope="col" class="align-right">Cantidad solicitada</th>${editable ? '<th scope="col"><span class="visually-hidden">Acciones</span></th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table></div>`
     : `<div class="empty-state"><p>Todavía no hay artículos en esta lista.</p></div>`;
@@ -415,7 +415,7 @@ export function productDetailPage({ product, ...session }) {
       <h2>${escapeHtml(product.part_number)}</h2>
       <dl class="product-details">
         <dt>Estado</dt><dd>${product.archived ? 'Archivado' : 'Activo'}</dd>
-        <dt>Existencias</dt><dd>${product.quantity}</dd>
+        <dt>Inventario</dt><dd>${product.quantity}</dd>
         <dt>Precio</dt><dd>${product.price_cents == null ? '—' : `$${formatCents(product.price_cents)}`}</dd>
         <dt>Precio de fábrica</dt><dd>${product.cost_cents == null ? '—' : `$${formatCents(product.cost_cents)}`}</dd>
         ${product.price_cents != null && product.cost_cents != null ? `<dt>Ganancia</dt><dd>${formatMargin(product.price_cents - product.cost_cents)}</dd>` : ''}
@@ -527,7 +527,7 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
     <div class="breadcrumb"><a href="/products">Productos</a><span aria-hidden="true">/</span><span>${title}</span></div>
     <div class="page-heading form-heading">
       <div><p class="eyebrow">Ficha del artículo</p><h1>${title}</h1></div>
-      ${!isNew ? `<div>Existencias: <strong>${product.quantity}</strong> · <a href="/products/${product.id}/history">Historial</a></div>` : ''}
+      ${!isNew ? `<div>Inventario: <strong>${product.quantity}</strong> · <a href="/products/${product.id}/history">Historial</a></div>` : ''}
     </div>
     <form class="product-form product-form--split" method="post" action="${action}" enctype="multipart/form-data">
       <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
@@ -721,8 +721,8 @@ export function importPage({ review, confirmationToken, error = '', view = 'inve
     ${review ? `
       <section class="inventory-panel" aria-label="Vista previa de importación">
         <div class="table-toolbar"><div><h2>${review.rows.filter((row) => !row.previous && !row.errors.length).length} altas · ${review.rows.filter((row) => row.previous && !row.errors.length).length} actualizaciones · ${invalid} filas con errores</h2>
-          <p>Catálogo, categoría, tipo y proveedor: ${review.descriptions ? 'sí' : 'no'} · Existencias: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
-        <div class="table-scroll"><table><thead><tr><th>Fila</th><th>P/N</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Existencias</th><th>Errores</th></tr></thead>
+          <p>Catálogo, categoría, tipo y proveedor: ${review.descriptions ? 'sí' : 'no'} · Inventario: ${review.stock ? (review.operation === 'adjust' ? 'Ajustar por' : 'Establecer en') : 'sin cambios'}</p></div></div>
+        <div class="table-scroll"><table><thead><tr><th>Fila</th><th>P/N</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Inventario</th><th>Errores</th></tr></thead>
           <tbody>${review.rows.map((row) => `<tr><td>${row.number}</td><td>${escapeHtml(row.partNumber)}</td>
             <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
             <td>${importDetails(row.previous, { category: row.previous?.category_name, productType: row.previous?.product_type_name, supplier: row.previous?.supplier_name })}</td>

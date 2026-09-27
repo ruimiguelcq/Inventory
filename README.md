@@ -47,7 +47,7 @@ Gestión y Administración pueden **Archivar** un repuesto desde su ficha para r
 
 Cada producto puede tener una imagen (JPG, PNG o WEBP, hasta 2 MB) que se sube, cambia o quita desde la ficha. La imagen se sirve por una ruta propia de la aplicación (`/products/<id>/image`) y se muestra como miniatura junto al nombre en las tablas de Productos, Inventario y listas de compra; un producto sin imagen se muestra sin hueco. Las imágenes se guardan en `data/images/` (configurable con `IMAGES_DIRECTORY`) y las copias de seguridad las incluyen junto a la base de datos: al restaurar una copia se reponen las imágenes de ese momento, conservando la copia previa del estado anterior.
 
-## Existencias e historial
+## Inventario e historial
 
 Desde **Inventario**, pulsa el número de **Disponible** para ajustarlo en línea, o abre **Ajustar inventario** desde la ficha del artículo:
 
@@ -75,7 +75,7 @@ Desde **Productos → Importar productos** o **Inventario → Importar**, Gesti�
 - Guarda **P/N como texto** en Excel, incluidos los identificadores numéricos, para conservar ceros iniciales. Usa valores sin fórmulas. Presentaciones admitidas: `SET`, `KIT`, `unidad`. El precio se escribe en dólares con hasta dos decimales.
 - **Catálogo:** requiere P/N, Producto (o Descripción en archivos antiguos) y Presentación; crea artículos o actualiza los existentes por P/N, sin distinguir mayúsculas ASCII. `Producto` es el nombre y `Descripción` la descripción larga; si el archivo solo trae `Descripción`, se usa como nombre, de modo que los archivos de la v1.1 siguen importándose. Marca, Ubicación, Mínimo de stock, Categoría, Tipo, Proveedor y Precio son opcionales: una columna ausente conserva el valor existente y una celda vacía lo borra. Las categorías, tipos y proveedores escritos se crean o reutilizan sin duplicar equivalentes. Las altas sin importar inventario comienzan en cero.
 - **Estado** es informativo: se importa sin archivar ni desarchivar; el estado se cambia desde la ficha del producto. Las imágenes no forman parte del Excel.
-- **Existencias (opcional en Productos):** requiere la columna Cantidad. Elige explícitamente **Ajustar por** (sumar/restar) o **Establecer en** (total exacto). Las cantidades deben ser enteras y el resultado no puede ser negativo.
+- **Inventario (opcional en Productos):** requiere la columna Cantidad. Elige explícitamente **Ajustar por** (sumar/restar) o **Establecer en** (total exacto). Las cantidades deben ser enteras y el resultado no puede ser negativo.
 
 **Inventario** importa solo cantidades de artículos existentes. La primera fila contiene los encabezados:
 

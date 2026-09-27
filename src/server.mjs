@@ -642,7 +642,7 @@ export function createInventoryServer({
         }
         const message = params.get('msg') === 'archived' ? 'Repuesto archivado.'
           : params.get('msg') === 'restored' ? 'Repuesto restaurado.'
-          : params.get('msg') === 'stocked' ? 'Existencias actualizadas.'
+          : params.get('msg') === 'stocked' ? 'Inventario actualizado.'
           : params.get('imported') === '1' ? 'Importación aplicada.'
           : params.get('saved') === '1' ? 'Repuesto guardado.' : '';
         const render = url.pathname === '/products' ? productsPage : inventoryPage;
