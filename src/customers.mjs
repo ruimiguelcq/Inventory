@@ -1,4 +1,4 @@
-import { findCustomerByTaxId, findUser, insertCustomer, replaceCustomerContacts, updateCustomer } from './database.mjs';
+import { findCustomerByTaxId, findUser, insertCustomer, replaceCustomerAddress, replaceCustomerContacts, updateCustomer } from './database.mjs';
 import { canManageInventory } from './permissions.mjs';
 
 export class CustomerError extends Error {
@@ -13,6 +13,31 @@ export const MAX_TAX_ID = 20;
 export const MAX_EMAIL = 200;
 export const MAX_PHONE = 30;
 export const MAX_NOTES = 2000;
+export const MAX_ADDRESS = 120;
+export const MAX_POSTAL_CODE = 20;
+
+// Venezuela is the only country for now; the field stays visible with a fixed value.
+export const DEFAULT_COUNTRY = 'Venezuela';
+
+// The 23 states plus the Capital District, used by the only free-text-free address field.
+export const VENEZUELA_STATES = [
+  'Amazonas', 'Anzoátegui', 'Apure', 'Aragua', 'Barinas', 'Bolívar', 'Carabobo', 'Cojedes',
+  'Delta Amacuro', 'Distrito Capital', 'Falcón', 'Guárico', 'La Guaira', 'Lara', 'Mérida',
+  'Miranda', 'Monagas', 'Nueva Esparta', 'Portuguesa', 'Sucre', 'Táchira', 'Trujillo',
+  'Yaracuy', 'Zulia',
+];
+
+// Form field -> column for the plain text parts of the address. The country and state are handled
+// apart because one is fixed and the other must come from VENEZUELA_STATES.
+export const ADDRESS_FIELDS = [
+  ['addressFirstName', 'first_name'],
+  ['addressLastName', 'last_name'],
+  ['addressCompany', 'company'],
+  ['address1', 'address1'],
+  ['address2', 'address2'],
+  ['addressPostalCode', 'postal_code'],
+  ['addressCity', 'city'],
+];
 
 // Spanish is the only language for now; the field stays visible with a single option.
 export const LANGUAGES = [['es', 'Español [Predeterminado]']];
@@ -57,6 +82,29 @@ export function validateCustomer(form) {
   return { customer };
 }
 
+// The address is optional and single. Empty means "no address"; any field filled in stores one,
+// with the country forced to Venezuela and the state restricted to the fixed list.
+export function validateAddress(form) {
+  const address = { country: DEFAULT_COUNTRY, state: (form.get('addressState') ?? '').trim() };
+  for (const [field, column] of ADDRESS_FIELDS) address[column] = (form.get(field) ?? '').trim();
+  if (address.state && !VENEZUELA_STATES.includes(address.state)) return { error: 'Elige un estado de Venezuela.' };
+  if (address.postal_code.length > MAX_POSTAL_CODE) return { error: `El código postal puede tener hasta ${MAX_POSTAL_CODE} caracteres.` };
+  for (const [, column] of ADDRESS_FIELDS) {
+    if (column === 'postal_code') continue;
+    if (address[column].length > MAX_ADDRESS) return { error: `Cada dato de la dirección puede tener hasta ${MAX_ADDRESS} caracteres.` };
+  }
+  const present = Boolean(address.state) || ADDRESS_FIELDS.some(([, column]) => address[column]);
+  return { address: present ? address : null };
+}
+
+// Reads the address back out of a submitted form, keeping cleared fields cleared (?? only keeps the
+// previous value when the field is absent entirely, which is how a re-rendered form behaves).
+export function addressFromForm(form, previous = {}) {
+  const address = { ...previous, country: previous.country ?? DEFAULT_COUNTRY, state: form.get('addressState') ?? previous.state ?? '' };
+  for (const [field, column] of ADDRESS_FIELDS) address[column] = form.get(field) ?? previous[column] ?? '';
+  return address;
+}
+
 function requireManager(database, userId) {
   const user = findUser(database, userId);
   if (!canManageInventory(user?.role)) {
@@ -64,8 +112,8 @@ function requireManager(database, userId) {
   }
 }
 
-// The customer, its emails and its phones commit together; a duplicate RIF/Cédula aborts the lot.
-export function saveCustomer(database, userId, customer, existing = null) {
+// The customer, its contacts and its address commit together; a duplicate RIF/Cédula aborts the lot.
+export function saveCustomer(database, userId, customer, address = null, existing = null) {
   database.exec('BEGIN IMMEDIATE');
   try {
     requireManager(database, userId);
@@ -81,6 +129,7 @@ export function saveCustomer(database, userId, customer, existing = null) {
     const id = existing ? existing.id : Number(insertCustomer(database, record).lastInsertRowid);
     if (existing) updateCustomer(database, id, record);
     replaceCustomerContacts(database, id, customer.emails, customer.phones);
+    replaceCustomerAddress(database, id, address);
     database.exec('COMMIT');
     return id;
   } catch (error) {

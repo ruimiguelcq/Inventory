@@ -171,6 +171,24 @@ export function openDatabase(databasePath) {
 
     CREATE INDEX IF NOT EXISTS customer_emails_customer ON customer_emails(customer_id, position, id);
     CREATE INDEX IF NOT EXISTS customer_phones_customer ON customer_phones(customer_id, position, id);
+
+    -- A customer has at most one delivery address, so customer_id is unique. Removing the
+    -- customer removes it, and it carries no phone of its own.
+    CREATE TABLE IF NOT EXISTS customer_addresses (
+      id INTEGER PRIMARY KEY,
+      customer_id INTEGER NOT NULL UNIQUE REFERENCES customers(id) ON DELETE CASCADE,
+      country TEXT NOT NULL DEFAULT 'Venezuela',
+      first_name TEXT,
+      last_name TEXT,
+      company TEXT,
+      address1 TEXT,
+      address2 TEXT,
+      postal_code TEXT,
+      city TEXT,
+      state TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   return database;
 }
@@ -442,4 +460,18 @@ export function replaceCustomerContacts(database, customerId, emails, phones) {
   emails.forEach((email, position) => insertEmail.run(customerId, email, position));
   const insertPhone = database.prepare('INSERT INTO customer_phones (customer_id, phone, position) VALUES (?, ?, ?)');
   phones.forEach((phone, position) => insertPhone.run(customerId, phone, position));
+}
+
+export function findCustomerAddress(database, customerId) {
+  return database.prepare('SELECT * FROM customer_addresses WHERE customer_id = ?').get(customerId);
+}
+
+// A customer has at most one address: an empty save removes it, otherwise it is rewritten in place.
+export function replaceCustomerAddress(database, customerId, address) {
+  database.prepare('DELETE FROM customer_addresses WHERE customer_id = ?').run(customerId);
+  if (!address) return;
+  database.prepare(`
+    INSERT INTO customer_addresses (customer_id, country, first_name, last_name, company, address1, address2, postal_code, city, state)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customerId, address.country, address.first_name, address.last_name, address.company, address.address1, address.address2, address.postal_code, address.city, address.state);
 }
