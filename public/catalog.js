@@ -173,6 +173,55 @@ for (const input of document.querySelectorAll('.media-box__input')) {
   });
 }
 
+// Address modal: the fields live inside the customer form, so opening a native <dialog> keeps the
+// rest of the ficha untouched. "Quitar" clears the fields; saving with them empty removes it.
+const addressDialog = document.querySelector('[data-address-dialog]');
+if (addressDialog) {
+  const root = addressDialog.closest('form') ?? document;
+  const summary = root.querySelector('[data-address-summary]');
+  const empty = root.querySelector('[data-address-empty]');
+  const removeButton = root.querySelector('[data-address-remove]');
+  const openButton = root.querySelector('[data-address-open]');
+  const text = (name) => (addressDialog.querySelector(`[name="${name}"]`)?.value ?? '').trim();
+  const update = () => {
+    // The country is fixed, so it only shows once some other part of the address is present.
+    const lines = [
+      [text('addressFirstName'), text('addressLastName')].filter(Boolean).join(' '),
+      text('addressCompany'), text('address1'), text('address2'),
+      [text('addressCity'), text('addressState')].filter(Boolean).join(', '),
+      text('addressPostalCode'),
+    ].filter(Boolean);
+    if (lines.length) lines.push(text('addressCountry'));
+    if (summary) {
+      summary.replaceChildren(...lines.flatMap((line, index) => (index ? [document.createElement('br'), line] : [line])));
+      summary.hidden = lines.length === 0;
+    }
+    if (empty) empty.hidden = lines.length > 0;
+    if (removeButton) removeButton.hidden = lines.length === 0;
+    if (openButton) openButton.textContent = lines.length ? 'Editar dirección' : 'Agregar dirección';
+  };
+  const fields = () => [...addressDialog.querySelectorAll('input[name], select[name]')];
+  let snapshot = [];
+  const open = () => {
+    snapshot = fields().map((field) => [field, field.value]);
+    if (addressDialog.showModal) addressDialog.showModal(); else addressDialog.setAttribute('open', '');
+  };
+  const close = () => { if (addressDialog.close) addressDialog.close(); else addressDialog.removeAttribute('open'); };
+  root.addEventListener('click', (event) => {
+    if (event.target.closest('[data-address-open]')) { open(); return; }
+    if (event.target.closest('[data-address-cancel]')) {
+      snapshot.forEach(([field, value]) => { field.value = value; });
+      close();
+      return;
+    }
+    if (event.target.closest('[data-address-apply]')) { update(); close(); return; }
+    if (event.target.closest('[data-address-remove]')) {
+      fields().forEach((field) => { if (field.name !== 'addressCountry') field.value = ''; });
+      update();
+    }
+  });
+}
+
 // Live margin: Ganancia follows Precio minus Precio de fábrica while the user types.
 for (const card of document.querySelectorAll('.price-card')) {
   const price = card.querySelector('[data-price]');

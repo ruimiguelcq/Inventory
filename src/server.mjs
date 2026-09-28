@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import {
   createAdministrator,
   findCustomer,
+  findCustomerAddress,
   findUser,
   findProduct,
   findPurchaseOrder,
@@ -28,7 +29,7 @@ import {
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, customerDetailPage, customerFormPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { CustomerError, EMAIL_FIELDS, PHONE_FIELDS, saveCustomer, validateCustomer } from './customers.mjs';
+import { addressFromForm, CustomerError, EMAIL_FIELDS, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
@@ -178,11 +179,12 @@ function customerFrom(form, previous = {}) {
 
 function customerView(database, row) {
   if (!row) return null;
-  return { ...row, emails: listCustomerEmails(database, row.id), phones: listCustomerPhones(database, row.id) };
+  return { ...row, emails: listCustomerEmails(database, row.id), phones: listCustomerPhones(database, row.id), address: findCustomerAddress(database, row.id) ?? null };
 }
 
 function sendCustomerFormError(response, form, session, message, { isNew = true, previous = {}, status = 400 } = {}) {
-  return sendHtml(response, customerFormPage({ ...session, customer: customerFrom(form, previous), isNew, error: message }), status);
+  const customer = { ...customerFrom(form, previous), address: addressFromForm(form, previous.address) };
+  return sendHtml(response, customerFormPage({ ...session, customer, isNew, error: message }), status);
 }
 
 function saveProduct(database, response, { form, session, product, isNew, existingProduct, image = null, removeImage = false, imageDirectory }) {
@@ -229,11 +231,13 @@ async function saveCustomerFromRequest(database, response, { request, session, e
   const user = findUser(database, session.userId);
   if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
   const isNew = !existing;
-  const previous = existing ?? {};
+  const previous = { ...(existing ?? {}), address: existing ? findCustomerAddress(database, existing.id) ?? {} : {} };
   const { error, customer } = validateCustomer(form);
   if (error) return sendCustomerFormError(response, form, session, error, { isNew, previous });
+  const { error: addressError, address } = validateAddress(form);
+  if (addressError) return sendCustomerFormError(response, form, session, addressError, { isNew, previous });
   try {
-    const id = saveCustomer(database, session.userId, customer, existing);
+    const id = saveCustomer(database, session.userId, customer, address, existing);
     return redirect(response, `/customers/${id}?saved=1`);
   } catch (thrown) {
     if (thrown instanceof CustomerError) return sendCustomerFormError(response, form, session, thrown.message, { isNew, previous, status: thrown.status });

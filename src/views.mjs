@@ -1,6 +1,6 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
 import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
-import { DEFAULT_LANGUAGE, LANGUAGES, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_TAX_ID, customerName } from './customers.mjs';
+import { DEFAULT_COUNTRY, DEFAULT_LANGUAGE, LANGUAGES, MAX_ADDRESS, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_POSTAL_CODE, MAX_TAX_ID, VENEZUELA_STATES, customerName } from './customers.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
@@ -659,6 +659,81 @@ export function customersPage({ customers = [], message = '', ...session }) {
   return page('Clientes', content, { ...session, active: 'customers', message });
 }
 
+// The delivery address is optional and single. Lines collapse to only the parts that are filled in.
+function addressLines(address) {
+  if (!address) return [];
+  return [
+    [address.first_name, address.last_name].filter(Boolean).join(' '),
+    address.company,
+    address.address1,
+    address.address2,
+    [address.city, address.state].filter(Boolean).join(', '),
+    address.postal_code,
+    address.country,
+  ].filter(Boolean);
+}
+
+// The address lives inside the customer form so opening or closing the modal never drops edits to
+// the rest of the ficha. Without JavaScript a noscript rule reveals it inline as a plain block.
+function addressDialog(address = {}) {
+  const value = (column) => escapeHtml(address[column] ?? '');
+  const state = address.state ?? '';
+  return `
+    <noscript><style>[data-address-dialog]{display:block;position:static;max-width:100%;max-height:none}[data-address-dialog] [data-address-cancel],[data-address-dialog] [data-address-apply]{display:none}</style></noscript>
+    <dialog class="address-dialog" data-address-dialog aria-labelledby="address-dialog-title">
+      <div class="address-dialog__panel">
+        <div class="address-dialog__head">
+          <h2 id="address-dialog-title">Agregar dirección</h2>
+          <button type="button" class="button button-quiet" data-address-cancel aria-label="Cerrar">Cerrar</button>
+        </div>
+        <p class="form-hint">Se usa para entregas y facturación. Todos los campos son opcionales.</p>
+        <div class="form-grid">
+          <div class="field field-wide"><label for="addressCountry">País o región</label>
+            <input id="addressCountry" name="addressCountry" value="${escapeHtml(DEFAULT_COUNTRY)}" readonly></div>
+          <div class="field"><label for="addressFirstName">Nombre</label>
+            <input id="addressFirstName" name="addressFirstName" value="${value('first_name')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field"><label for="addressLastName">Apellido</label>
+            <input id="addressLastName" name="addressLastName" value="${value('last_name')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field field-wide"><label for="addressCompany">Empresa</label>
+            <input id="addressCompany" name="addressCompany" value="${value('company')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field field-wide"><label for="address1">Calle y número de casa</label>
+            <input id="address1" name="address1" value="${value('address1')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field field-wide"><label for="address2">Apartamento, local, etc.</label>
+            <input id="address2" name="address2" value="${value('address2')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field"><label for="addressPostalCode">Código postal</label>
+            <input id="addressPostalCode" name="addressPostalCode" value="${value('postal_code')}" maxlength="${MAX_POSTAL_CODE}"></div>
+          <div class="field"><label for="addressCity">Ciudad</label>
+            <input id="addressCity" name="addressCity" value="${value('city')}" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field field-wide"><label for="addressState">Estado</label>
+            <select id="addressState" name="addressState">
+              <option value="">Selecciona un estado</option>
+              ${VENEZUELA_STATES.map((name) => `<option value="${escapeHtml(name)}"${name === state ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+            </select></div>
+        </div>
+        <div class="address-dialog__actions">
+          <button type="button" class="button button-secondary" data-address-cancel>Cancelar</button>
+          <button type="button" class="button button-primary" data-address-apply>Listo</button>
+        </div>
+      </div>
+    </dialog>`;
+}
+
+function addressCard(address) {
+  const lines = addressLines(address);
+  return `
+    <section class="form-section form-card" data-address-card>
+      <h2>Dirección predeterminada</h2>
+      <p class="form-hint">Opcional. Una sola dirección de entrega por cliente.</p>
+      <div class="address-summary" data-address-summary${lines.length ? '' : ' hidden'}>${lines.map(escapeHtml).join('<br>')}</div>
+      <p class="address-empty" data-address-empty${lines.length ? ' hidden' : ''}>No hay dirección guardada.</p>
+      <div class="form-actions">
+        <button type="button" class="button button-primary" data-address-open>${lines.length ? 'Editar dirección' : 'Agregar dirección'}</button>
+        <button type="button" class="button button-secondary" data-address-remove${lines.length ? '' : ' hidden'}>Quitar dirección</button>
+      </div>
+      ${addressDialog(address ?? {})}
+    </section>`;
+}
+
 // The principal email and phone are required; extra contacts live behind "Datos adicionales".
 export function customerFormPage({ customer = {}, error = '', isNew = true, ...session }) {
   const emails = customer.emails ?? [];
@@ -725,6 +800,7 @@ export function customerFormPage({ customer = {}, error = '', isNew = true, ...s
               <input id="taxId" name="taxId" value="${escapeHtml(customer.tax_id ?? '')}" maxlength="${MAX_TAX_ID}" placeholder="V-12345678-9" required>
               <p class="form-hint">Identifica al cliente y evita duplicados.</p></div>
           </section>
+          ${addressCard(customer.address)}
         </aside>
       </div>
     </form>`;
@@ -737,6 +813,7 @@ export function customerDetailPage({ customer, message = '', ...session }) {
   const contacts = (values) => values.length
     ? values.map((value, index) => `${escapeHtml(value)}${index === 0 ? ' <span class="presentation-tag">Principal</span>' : ''}`).join('<br>')
     : '—';
+  const lines = addressLines(customer.address);
   const content = `
     <div class="breadcrumb"><a href="/customers">Clientes</a><span aria-hidden="true">/</span><span>Ficha del cliente</span></div>
     <div class="page-heading"><h1>${escapeHtml(customerName(customer))}</h1>
@@ -750,6 +827,7 @@ export function customerDetailPage({ customer, message = '', ...session }) {
         <dt>Número de teléfono</dt><dd>${contacts(phones)}</dd>
         <dt>Notas</dt><dd class="long-description">${customer.notes ? escapeHtml(customer.notes) : '—'}</dd>
         <dt>RIF / Cédula</dt><dd>${escapeHtml(customer.tax_id)}</dd>
+        <dt>Dirección predeterminada</dt><dd>${lines.length ? lines.map(escapeHtml).join('<br>') : 'Sin dirección'}</dd>
       </dl>
     </section>`;
   return page(customerName(customer), content, { ...session, active: 'customers', message });
