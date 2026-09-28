@@ -52,6 +52,28 @@ export function customerName(customer) {
   return [customer?.name, customer?.last_name].filter(Boolean).join(' ');
 }
 
+// Ubicación for the list: Ciudad, Estado, País of the delivery address, empty without one.
+export function customerLocation(customer) {
+  return [customer?.address_city, customer?.address_state, customer?.address_country].filter(Boolean).join(', ');
+}
+
+// Instant search matches only the name (name and last name); never email, phone or RIF/Cédula.
+export function filterCustomers(customers, params) {
+  const query = (params.get('q') ?? '').trim().toLowerCase();
+  if (!query) return customers;
+  return customers.filter((customer) => customerName(customer).toLowerCase().includes(query));
+}
+
+export const CUSTOMERS_PER_PAGE = 50;
+
+export function paginateCustomers(customers, params) {
+  const total = customers.length;
+  const pages = Math.max(1, Math.ceil(total / CUSTOMERS_PER_PAGE));
+  const requestedPage = Number(params.get('page'));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pages) : 1;
+  return { customers: customers.slice((page - 1) * CUSTOMERS_PER_PAGE, page * CUSTOMERS_PER_PAGE), pagination: { page, pageSize: CUSTOMERS_PER_PAGE, total, pages } };
+}
+
 function slotValues(form, fields) {
   return fields.map((field) => (form.get(field) ?? '').trim()).filter(Boolean);
 }
@@ -112,24 +134,30 @@ function requireManager(database, userId) {
   }
 }
 
+// The write itself, without opening a transaction, so bulk imports can commit many rows as one.
+export function writeCustomer(database, userId, customer, address = null, existing = null) {
+  requireManager(database, userId);
+  const clash = findCustomerByTaxId(database, customer.taxId);
+  if (clash && clash.id !== (existing?.id ?? null)) throw new CustomerError('Ya existe un cliente con ese RIF / Cédula.', 409);
+  const record = {
+    name: customer.name,
+    lastName: customer.lastName || null,
+    language: customer.language,
+    notes: customer.notes || null,
+    taxId: customer.taxId,
+  };
+  const id = existing ? existing.id : Number(insertCustomer(database, record).lastInsertRowid);
+  if (existing) updateCustomer(database, id, record);
+  replaceCustomerContacts(database, id, customer.emails, customer.phones);
+  replaceCustomerAddress(database, id, address);
+  return id;
+}
+
 // The customer, its contacts and its address commit together; a duplicate RIF/Cédula aborts the lot.
 export function saveCustomer(database, userId, customer, address = null, existing = null) {
   database.exec('BEGIN IMMEDIATE');
   try {
-    requireManager(database, userId);
-    const clash = findCustomerByTaxId(database, customer.taxId);
-    if (clash && clash.id !== (existing?.id ?? null)) throw new CustomerError('Ya existe un cliente con ese RIF / Cédula.', 409);
-    const record = {
-      name: customer.name,
-      lastName: customer.lastName || null,
-      language: customer.language,
-      notes: customer.notes || null,
-      taxId: customer.taxId,
-    };
-    const id = existing ? existing.id : Number(insertCustomer(database, record).lastInsertRowid);
-    if (existing) updateCustomer(database, id, record);
-    replaceCustomerContacts(database, id, customer.emails, customer.phones);
-    replaceCustomerAddress(database, id, address);
+    const id = writeCustomer(database, userId, customer, address, existing);
     database.exec('COMMIT');
     return id;
   } catch (error) {

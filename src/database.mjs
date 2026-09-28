@@ -440,8 +440,17 @@ export function findCustomerByTaxId(database, taxId) {
   return database.prepare('SELECT * FROM customers WHERE tax_id = ? COLLATE NOCASE').get(taxId);
 }
 
+// The list shows each customer's location, so the single (optional) address is folded in here.
 export function listCustomers(database) {
-  return database.prepare('SELECT * FROM customers ORDER BY name COLLATE NOCASE, last_name COLLATE NOCASE, id').all();
+  return database.prepare(`
+    SELECT customers.*,
+      customer_addresses.city AS address_city,
+      customer_addresses.state AS address_state,
+      customer_addresses.country AS address_country
+    FROM customers
+    LEFT JOIN customer_addresses ON customer_addresses.customer_id = customers.id
+    ORDER BY customers.name COLLATE NOCASE, customers.last_name COLLATE NOCASE, customers.id
+  `).all();
 }
 
 export function listCustomerEmails(database, customerId) {

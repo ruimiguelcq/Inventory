@@ -1,6 +1,6 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
 import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
-import { DEFAULT_COUNTRY, DEFAULT_LANGUAGE, LANGUAGES, MAX_ADDRESS, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_POSTAL_CODE, MAX_TAX_ID, VENEZUELA_STATES, customerName } from './customers.mjs';
+import { DEFAULT_COUNTRY, DEFAULT_LANGUAGE, LANGUAGES, MAX_ADDRESS, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_POSTAL_CODE, MAX_TAX_ID, VENEZUELA_STATES, customerLocation, customerName } from './customers.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
@@ -635,28 +635,133 @@ export function productFormPage({ product = {}, categories = [], productTypes = 
   return page(title, content, { ...session, active: 'products' });
 }
 
-// Customer directory. The list lands the section; search and pagination arrive with their own ticket.
-export function customersPage({ customers = [], message = '', ...session }) {
+// Customer directory: Nombre del cliente and Ubicación only, instant search by name, fixed 50.
+export function customersPage({ customers = [], filters = {}, pagination, queryParams = new URLSearchParams(), message = '', ...session }) {
   const canManage = canManageInventory(session.role);
   const addButton = canManage ? '<a class="button button-primary" href="/customers/new">Agregar cliente</a>' : '';
+  const hasActiveFilter = Boolean(filters.q);
+  // The full export follows the visible search, so it covers every matching page.
+  const exportParams = new URLSearchParams(queryParams);
+  exportParams.delete('page');
+  exportParams.set('view', 'customers');
+  exportParams.set('scope', 'all');
+  const exportHref = `/exports?${exportParams.toString()}`;
+  const headerActions = `<a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>
+    ${canManage ? '<a class="button button-secondary" href="/imports?view=customers">Importar</a>' : ''}
+    ${addButton}`;
   const rows = customers.map((customer) => `<tr>
     <td class="align-left"><a class="product-description" href="/customers/${customer.id}">${escapeHtml(customerName(customer))}</a></td>
+    <td class="align-left">${escapeHtml(customerLocation(customer))}</td>
   </tr>`).join('');
+
+  const pageLink = (number, label) => {
+    const params = new URLSearchParams(queryParams);
+    params.set('page', number);
+    return `<a class="button button-secondary" href="/customers?${escapeHtml(params.toString())}">${label}</a>`;
+  };
+  const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
+    <span>${pagination.total} clientes · Página ${pagination.page} de ${pagination.pages}</span>
+    <div>${pagination.page > 1 ? pageLink(pagination.page - 1, 'Anterior') : ''}
+      ${pagination.page < pagination.pages ? pageLink(pagination.page + 1, 'Siguiente') : ''}</div>
+  </nav>` : '';
+
+  const emptyState = hasActiveFilter
+    ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Sin resultados</h3>
+      <p>Ningún cliente coincide con la búsqueda.</p>
+      <a class="button button-secondary" href="/customers">Limpiar búsqueda</a></div>`
+    : `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Todavía no hay clientes</h3>
+      <p>${canManage ? 'Añade el primer cliente con su RIF / Cédula y sus datos de contacto.' : 'Cuando Gestión cree un cliente, aparecerá aquí.'}</p>
+      ${addButton}</div>`;
+
   const content = `
     <div class="page-heading">
       <div><h1>Clientes</h1></div>
-      <div class="form-actions">${addButton}</div>
+      <div class="form-actions">${headerActions}</div>
     </div>
     <section class="inventory-panel" aria-label="Lista de clientes">
-      ${customers.length ? `<div class="table-scroll"><table>
-        <thead><tr><th scope="col" class="align-left">Nombre del cliente</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`
-        : `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
-          <h3>Todavía no hay clientes</h3>
-          <p>${canManage ? 'Añade el primer cliente con su RIF / Cédula y sus datos de contacto.' : 'Cuando Gestión cree un cliente, aparecerá aquí.'}</p>
-          ${addButton}</div>`}
+      <div class="table-toolbar">
+        <div><h2>${hasActiveFilter ? 'Resultados' : 'Todos'}</h2></div>
+      </div>
+      <form class="catalog-toolbar" method="get" action="/customers" data-instant-search>
+        <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por nombre" aria-label="Buscar por nombre">
+        <button class="visually-hidden" type="submit">Buscar</button>
+      </form>
+      <div data-catalog-results>
+        ${customers.length ? `
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th scope="col" class="align-left">Nombre del cliente</th>
+                <th scope="col" class="align-left">Ubicación</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>` : emptyState}
+        ${pager}
+      </div>
     </section>`;
   return page('Clientes', content, { ...session, active: 'customers', message });
+}
+
+// Customer Excel import: preview with altas, actualizaciones and per-row errors; one transaction.
+export function customerImportPage({ review, confirmationToken, error = '', ...session }) {
+  const invalid = review?.rows.filter((row) => row.errors.length).length ?? 0;
+  const previousCustomer = (row) => (row.previous ? { ...row.previous.customer, emails: row.previous.emails, phones: row.previous.phones } : null);
+  const summary = (customer, address) => {
+    if (!customer) return '—';
+    const parts = [
+      customer.name ? customerName({ name: customer.name, last_name: customer.last_name ?? customer.lastName }) : '',
+      (customer.emails ?? []).join(' | '),
+      (customer.phones ?? []).join(' | '),
+      address ? [address.city, address.state, address.country].filter(Boolean).join(', ') : '',
+    ].filter(Boolean);
+    return parts.length ? parts.map(escapeHtml).join('<br>') : '—';
+  };
+  const rows = review?.rows.map((row) => `<tr><td>${row.number}</td><td>${escapeHtml(row.taxId)}</td>
+      <td>${escapeHtml(customerName({ name: row.customer?.name ?? '', last_name: row.customer?.lastName ?? '' }))}</td>
+      <td>${row.errors.length ? 'Error' : row.previous ? 'Actualización' : 'Alta'}</td>
+      <td>${summary(previousCustomer(row), row.previous?.address)}</td>
+      <td>${summary(row.customer, row.address)}</td>
+      <td>${row.errors.map(escapeHtml).join('<br>')}</td></tr>`).join('') ?? '';
+  return page('Importar clientes', `
+    <div class="breadcrumb"><a href="/customers">Clientes</a><span aria-hidden="true">/</span><span>Importar Excel</span></div>
+    <div class="page-heading"><div><p class="eyebrow">Carga revisada</p><h1>${review ? 'Revisar importación' : 'Importar clientes'}</h1>
+      <p>Los cambios solo se guardan al confirmar el lote completo.</p></div></div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    ${review ? `
+      <section class="inventory-panel" aria-label="Vista previa de importación">
+        <div class="table-toolbar"><div><h2>${review.rows.filter((row) => !row.previous && !row.errors.length).length} altas · ${review.rows.filter((row) => row.previous && !row.errors.length).length} actualizaciones · ${invalid} filas con errores</h2></div></div>
+        <div class="table-scroll"><table><thead><tr><th>Fila</th><th>RIF / Cédula</th><th>Nombre</th><th>Resultado</th><th>Datos anteriores</th><th>Datos nuevos</th><th>Errores</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </section>
+      ${invalid ? '<p class="form-error" role="alert">Corrige todas las filas con errores y vuelve a cargar el archivo. No se aplicará ninguna fila.</p>' : `
+        <form method="post" action="/imports/confirm" class="form-actions">
+          <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+          <input type="hidden" name="view" value="customers">
+          <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">
+          <button class="button button-primary" type="submit">Confirmar importación</button>
+        </form>`}
+      <form method="post" action="/imports/cancel" class="form-actions">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <input type="hidden" name="view" value="customers">
+        <a class="button button-secondary" href="/imports?view=customers">Cargar otro archivo</a>
+        <button class="button button-quiet" type="submit">Cancelar importación</button>
+      </form>` : `
+      <form class="product-form" method="post" action="/imports" enctype="multipart/form-data">
+        <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+        <input type="hidden" name="view" value="customers">
+        <section class="form-section"><h2>Archivo y opciones</h2>
+          <p>Excel .xlsx, una sola hoja, hasta 2 MB y 1000 filas. Primera fila: encabezados.</p>
+          <p>Columnas: <strong>Nombre, Apellido, Correo electrónico, Teléfonos, Notas, País, Empresa, Calle, Apartamento, Ciudad, Estado, Código postal, RIF / Cédula</strong>.</p>
+          <p><strong>RIF / Cédula</strong> es obligatorio y único. Varios correos o teléfonos van en una celda separados por <strong>|</strong>. Un RIF repetido en el archivo bloquea el lote. Las columnas ausentes conservan el valor guardado; las celdas vacías lo borran. Usa valores, sin fórmulas.</p>
+          <div class="field"><label for="file">Archivo Excel</label><input id="file" name="file" type="file" accept=".xlsx" required></div>
+        </section>
+        <div class="form-actions"><a class="button button-quiet" href="/customers">Volver a Clientes</a>
+          <button class="button button-primary" type="submit">Revisar importación</button></div>
+      </form>`}`, { ...session, active: 'customers' });
 }
 
 // The delivery address is optional and single. Lines collapse to only the parts that are filled in.

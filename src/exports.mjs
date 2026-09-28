@@ -1,9 +1,10 @@
 import ExcelJS from 'exceljs';
 import { filterProducts } from './products.mjs';
+import { filterCustomers } from './customers.mjs';
 
 export class ExportError extends Error {}
 
-export const EXPORT_VIEWS = ['products', 'inventory'];
+export const EXPORT_VIEWS = ['products', 'inventory', 'customers'];
 
 // Productos exporta el catálogo descriptivo con su categoría; Inventario solo P/N, nombre e inventario.
 export function parseExportView(params) {
@@ -16,6 +17,12 @@ export function parseExportView(params) {
 export function selectExportProducts(products, params) {
   if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
   return filterProducts(products, params);
+}
+
+// The customer export covers every customer matching the name search, across all pages.
+export function selectExportCustomers(customers, params) {
+  if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
+  return filterCustomers(customers, params);
 }
 
 async function writeSheet(columns, products, title) {
@@ -82,6 +89,46 @@ export function exportInventory(products) {
 
 export function exportView(products, view) {
   return view === 'products' ? exportProducts(products) : exportInventory(products);
+}
+
+// Clientes carries the whole ficha; several emails or phones share one cell separated by " | ".
+const CUSTOMER_COLUMNS = [
+  { header: 'Nombre', key: 'name', width: 28 },
+  { header: 'Apellido', key: 'lastName', width: 28 },
+  { header: 'Correo electrónico', key: 'emails', width: 40 },
+  { header: 'Teléfonos', key: 'phones', width: 28 },
+  { header: 'Notas', key: 'notes', width: 40 },
+  { header: 'País', key: 'country', width: 16 },
+  { header: 'Empresa', key: 'company', width: 28 },
+  { header: 'Calle', key: 'address1', width: 32 },
+  { header: 'Apartamento', key: 'address2', width: 24 },
+  { header: 'Ciudad', key: 'city', width: 20 },
+  { header: 'Estado', key: 'state', width: 20 },
+  { header: 'Código postal', key: 'postalCode', width: 16, style: { numFmt: '@' } },
+  { header: 'RIF / Cédula', key: 'taxId', width: 20, style: { numFmt: '@' } },
+];
+
+function customerExportRow(customer) {
+  const address = customer.address ?? {};
+  return {
+    name: customer.name,
+    lastName: customer.last_name ?? '',
+    emails: (customer.emails ?? []).join(' | '),
+    phones: (customer.phones ?? []).join(' | '),
+    notes: customer.notes ?? '',
+    country: address.country ?? '',
+    company: address.company ?? '',
+    address1: address.address1 ?? '',
+    address2: address.address2 ?? '',
+    city: address.city ?? '',
+    state: address.state ?? '',
+    postalCode: address.postal_code ?? '',
+    taxId: customer.tax_id,
+  };
+}
+
+export function exportCustomers(customers) {
+  return writeSheet(CUSTOMER_COLUMNS, customers.map(customerExportRow), 'Clientes');
 }
 
 // A purchase export carries only P/N, name and requested quantity, with no prices, taxes,
