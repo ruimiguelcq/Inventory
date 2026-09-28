@@ -259,6 +259,7 @@ test('desktop sections, product details and management links respect every role 
       const response = await a.get(path);
       assert.equal(response.status, 200);
       const html = await response.text();
+      assert.doesNotMatch(html, /class="table-toolbar"/);
       const active = html.match(new RegExp(`<a[^>]*href="${path}"[^>]*aria-current="page"[^>]*>[\\s\\S]*?<\\/a>`));
       assert.ok(active, `${path} marca su enlace activo`);
       assert.match(active[0], new RegExp(`>${title}<`));
