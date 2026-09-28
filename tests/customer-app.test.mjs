@@ -58,7 +58,6 @@ test('un cliente se crea y su ficha muestra los datos guardados', async (t) => {
 
   const detail = await (await a.get('/customers/1')).text();
   assert.match(detail, /<h1>Ana Pérez<\/h1>/);
-  assert.match(detail, /Idioma<\/dt><dd>Español/);
   assert.match(detail, /Correo electrónico<\/dt><dd>ana@example\.com/);
   assert.match(detail, /Número de teléfono<\/dt><dd>\+58 412 000 0000/);
   assert.match(detail, /RIF \/ Cédula<\/dt><dd>V-1000/);
@@ -195,11 +194,8 @@ test('el correo y el teléfono principales no se pueden sustituir por un adicion
   assert.match(await (await a.get('/customers')).text(), /Todavía no hay clientes/);
 });
 
-test('rechaza un idioma distinto del español y unas notas excesivas', async (t) => {
+test('rechaza unas notas excesivas', async (t) => {
   const a = await app(t);
-  const language = await a.post('/customers', base(a, { language: 'en' }));
-  assert.equal(language.status, 400);
-  assert.match(await language.text(), /idioma debe ser Español/);
   const notes = await a.post('/customers', base(a, { taxId: 'V-1', notes: 'x'.repeat(2001) }));
   assert.equal(notes.status, 400);
   assert.match(await notes.text(), /notas/);

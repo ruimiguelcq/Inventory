@@ -39,10 +39,6 @@ export const ADDRESS_FIELDS = [
   ['addressCity', 'city'],
 ];
 
-// Spanish is the only language for now; the field stays visible with a single option.
-export const LANGUAGES = [['es', 'Español [Predeterminado]']];
-export const DEFAULT_LANGUAGE = 'es';
-
 // The form carries the principal contact plus two fixed extra slots, so at most three of each.
 // The first field of each list is the mandatory principal contact.
 export const EMAIL_FIELDS = ['email', 'emailExtra1', 'emailExtra2'];
@@ -85,7 +81,6 @@ export function validateCustomer(form) {
     name: (form.get('name') ?? '').trim(),
     lastName: (form.get('lastName') ?? '').trim(),
     taxId: (form.get('taxId') ?? '').trim(),
-    language: form.get('language') ?? DEFAULT_LANGUAGE,
     notes: (form.get('notes') ?? '').trim(),
     emails: slotValues(form, EMAIL_FIELDS),
     phones: slotValues(form, PHONE_FIELDS),
@@ -93,7 +88,6 @@ export function validateCustomer(form) {
   if (!customer.name || customer.name.length > MAX_NAME) return { error: `Escribe un nombre de cliente de hasta ${MAX_NAME} caracteres.`, customer };
   if (customer.lastName.length > MAX_NAME) return { error: `El apellido no puede superar los ${MAX_NAME} caracteres.`, customer };
   if (!customer.taxId || customer.taxId.length > MAX_TAX_ID) return { error: `Escribe un RIF / Cédula de hasta ${MAX_TAX_ID} caracteres.`, customer };
-  if (customer.language !== DEFAULT_LANGUAGE) return { error: 'El idioma debe ser Español.', customer };
   const principalEmail = (form.get(EMAIL_FIELDS[0]) ?? '').trim();
   const principalPhone = (form.get(PHONE_FIELDS[0]) ?? '').trim();
   if (!principalEmail || principalEmail.length > MAX_EMAIL) return { error: 'Escribe el correo electrónico principal.', customer };
@@ -142,7 +136,7 @@ export function writeCustomer(database, userId, customer, address = null, existi
   const record = {
     name: customer.name,
     lastName: customer.lastName || null,
-    language: customer.language,
+    language: 'es',
     notes: customer.notes || null,
     taxId: customer.taxId,
   };

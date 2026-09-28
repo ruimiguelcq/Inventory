@@ -170,7 +170,6 @@ function customerFrom(form, previous = {}) {
     name: form.get('name') ?? previous.name ?? '',
     last_name: form.get('lastName') ?? previous.last_name ?? '',
     tax_id: form.get('taxId') ?? previous.tax_id ?? '',
-    language: form.get('language') ?? previous.language ?? 'es',
     notes: form.get('notes') ?? previous.notes ?? '',
     emails: EMAIL_FIELDS.map((field) => (form.get(field) ?? '').trim()),
     phones: PHONE_FIELDS.map((field) => (form.get(field) ?? '').trim()),

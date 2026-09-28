@@ -130,33 +130,30 @@ test('el estado debe salir de la lista de Venezuela', async (t) => {
   assert.match(await (await a.get('/customers')).text(), /Todavía no hay clientes/);
 });
 
-test('el modal ofrece exactamente los campos de la dirección y ninguno de teléfono', async (t) => {
+test('el formulario incluye los campos de la dirección y ninguno de teléfono', async (t) => {
   const a = await app(t);
   const form = await (await a.get('/customers/new')).text();
-  const dialog = form.match(/<dialog[^>]*data-address-dialog[\s\S]*?<\/dialog>/)?.[0] ?? '';
-  for (const label of ['País o región', 'Nombre', 'Apellido', 'Empresa', 'Calle y número de casa', 'Apartamento, local, etc.', 'Código postal', 'Ciudad', 'Estado']) {
-    assert.match(dialog, new RegExp(label.replace(/[.()]/g, '\\$&')), label);
+  for (const label of ['País o región', 'Empresa', 'Calle y número de casa', 'Apartamento, local, etc.', 'Código postal', 'Ciudad', 'Estado']) {
+    assert.match(form, new RegExp(label.replace(/[.()]/g, '\\$&')), label);
   }
   for (const name of ['addressCountry', 'addressFirstName', 'addressLastName', 'addressCompany', 'address1', 'address2', 'addressPostalCode', 'addressCity', 'addressState']) {
-    assert.match(dialog, new RegExp(`name="${name}"`), name);
+    assert.match(form, new RegExp(`name="${name}"`), name);
   }
-  assert.doesNotMatch(dialog, /name="addressPhone"|Número de teléfono/);
-  assert.match(dialog, /name="addressCountry" value="Venezuela" readonly/);
-  assert.match(dialog, /<select id="addressState" name="addressState">/);
-  assert.match(dialog, /<option value="Zulia"/);
+  assert.doesNotMatch(form, /name="addressPhone"/);
+  assert.match(form, /<input id="addressCountry" name="addressCountry" value="Venezuela" readonly>/);
+  assert.match(form, /<select id="addressState" name="addressState">/);
+  assert.match(form, /<option value="Zulia"/);
 });
 
-test('el modal vive dentro de la ficha y sus botones no envían el formulario', async (t) => {
+test('la dirección vive dentro del formulario del cliente, sin modal', async (t) => {
   const a = await app(t);
   const form = await (await a.get('/customers/new')).text();
-  // El diálogo y sus campos van dentro del <form> del cliente: cerrarlo no navega ni pierde el resto.
-  const formMarkup = form.match(/<form class="product-form product-form--split"[\s\S]*?action="\/customers"[\s\S]*?<\/form>/)?.[0] ?? '';
-  assert.match(formMarkup, /<dialog[^>]*data-address-dialog/);
+  assert.doesNotMatch(form, /<dialog/);
+  assert.doesNotMatch(form, /data-address-(open|cancel|apply|remove)/);
+  // Los campos de la dirección van dentro del <form> del cliente y no navegan ni pierden el resto.
+  const formMarkup = form.match(/<form class="product-form product-form--split"[\s\S]*?<\/form>/)?.[0] ?? '';
   assert.match(formMarkup, /name="addressCity"/);
-  for (const hook of ['data-address-open', 'data-address-cancel', 'data-address-apply', 'data-address-remove']) {
-    const button = formMarkup.match(new RegExp(`<button[^>]*${hook}[^>]*>`))?.[0] ?? '';
-    assert.match(button, /type="button"/, hook);
-  }
+  assert.match(formMarkup, /name="address1"/);
 });
 
 test('Consulta ve la dirección pero no puede editarla', async (t) => {

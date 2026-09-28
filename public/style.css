@@ -647,22 +647,6 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
 .combo__add { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: #235b57; font-weight: 600; text-align: left; cursor: pointer; }
 .combo__add:hover { background: var(--sea-soft); }
 
-/* Address modal: part of the customer form, shown on top without navigating away. */
-.address-summary { margin: 0 0 14px; color: var(--ink); font-size: 13px; line-height: 1.6; }
-.address-empty { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
-.address-dialog {
-  width: min(560px, calc(100vw - 32px));
-  padding: 0;
-  border: 0;
-  border-radius: 12px;
-  box-shadow: 0 24px 60px rgb(21 47 62 / 28%);
-}
-.address-dialog::backdrop { background: rgb(21 47 62 / 45%); }
-.address-dialog__panel { padding: 22px; }
-.address-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-.address-dialog__head h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.address-dialog__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-
 @media (max-width: 760px) {
   .sidebar { width: 170px; padding-inline: 8px; }
   .authenticated .page-shell { margin-left: 170px; padding: 24px 16px; }
