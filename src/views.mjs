@@ -32,6 +32,36 @@ function productThumb(product) {
     : '';
 }
 
+// Shopify-style sidebar. Icons are decorative (aria-hidden), so each link keeps the label text as
+// its accessible name; nested items are indented and carry no icon.
+const SIDEBAR_ICONS = {
+  products: 'M3.8 6.4 10 3l6.2 3.4v7.2L10 17l-6.2-3.4z M3.8 6.4 10 9.8l6.2-3.4 M10 9.8V17',
+  customers: 'M10 9.6a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4z M4.9 16.6c0-2.6 2.3-4.4 5.1-4.4s5.1 1.8 5.1 4.4',
+  users: 'M10 3.3 16 5.4v4.1c0 3.6-2.5 5.7-6 7.1-3.5-1.4-6-3.5-6-7.1V5.4z M7.6 9.9l1.7 1.7 3.2-3.3',
+  backups: 'M10 3.3c3.3 0 6 1.1 6 2.5S13.3 8.3 10 8.3 4 7.2 4 5.8 6.7 3.3 10 3.3z M4 5.8v8.4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5.8 M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5',
+};
+
+const SIDEBAR_MAIN = [
+  { key: 'products', href: '/products', label: 'Productos', icon: 'products' },
+  { key: 'inventory', href: '/inventory', label: 'Inventario', child: true },
+  { key: 'purchases', href: '/purchase-orders', label: 'Órdenes de compra', child: true },
+  { key: 'customers', href: '/customers', label: 'Clientes', icon: 'customers' },
+];
+
+const SIDEBAR_ADMIN = [
+  { key: 'users', href: '/users', label: 'Cuentas y permisos', icon: 'users' },
+  { key: 'backups', href: '/backups', label: 'Copias de seguridad', icon: 'backups' },
+];
+
+function sidebarIcon(name) {
+  return `<span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="${SIDEBAR_ICONS[name]}"/></svg></span>`;
+}
+
+function sidebarLink({ key, href, label, icon = null, child = false }, active) {
+  const isActive = active === key;
+  return `<a class="sidebar-link${child ? ' sidebar-child' : ''}${isActive ? ' is-active' : ''}" href="${href}"${isActive ? ' aria-current="page"' : ''}>${icon ? sidebarIcon(icon) : ''}<span class="sidebar-label">${label}</span></a>`;
+}
+
 function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
   const navigation = username ? `
     <header class="topbar">
@@ -47,12 +77,12 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
         </form>
       </div>
     </header>
-    <aside class="sidebar"><nav aria-label="Navegación principal">
-      ${[['products', '/products', 'Productos'], ['inventory', '/inventory', 'Inventario'], ['purchases', '/purchase-orders', 'Órdenes de compra']].map(([key, href, label]) => `<a class="sidebar-link ${key !== 'products' ? 'sidebar-child' : ''} ${active === key ? 'is-active' : ''}" href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}
-      <a class="sidebar-link ${active === 'customers' ? 'is-active' : ''}" href="/customers" ${active === 'customers' ? 'aria-current="page"' : ''}>Clientes</a>
-      ${role === 'admin' ? `<hr class="sidebar-rule">
-      <a class="sidebar-link ${active === 'users' ? 'is-active' : ''}" href="/users" ${active === 'users' ? 'aria-current="page"' : ''}>Cuentas y permisos</a>
-      <a class="sidebar-link ${active === 'backups' ? 'is-active' : ''}" href="/backups" ${active === 'backups' ? 'aria-current="page"' : ''}>Copias de seguridad</a>` : ''}
+    <aside class="sidebar"><nav class="sidebar-nav" aria-label="Navegación principal">
+      ${SIDEBAR_MAIN.map((entry) => sidebarLink(entry, active)).join('')}
+      ${role === 'admin' ? `<div class="sidebar-footer">
+      <p class="sidebar-section-title">Configuración</p>
+      ${SIDEBAR_ADMIN.map((entry) => sidebarLink(entry, active)).join('')}
+      </div>` : ''}
     </nav></aside>` : '';
 
   return `<!doctype html>
