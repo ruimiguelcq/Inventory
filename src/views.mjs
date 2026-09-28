@@ -201,8 +201,6 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
       <th scope="col">Proveedor</th>
     </tr></thead>`;
 
-  const headingTitle = hasActiveFilter ? 'Resultados' : archivedView ? 'Repuestos archivados' : 'Todos';
-
   const emptyState = hasActiveFilter
     ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
       <h3>Sin resultados</h3>
@@ -261,11 +259,6 @@ function catalogPage({ products, filters = {}, pagination, queryParams = new URL
       <div class="form-actions">${headerActions}</div>
     </div>
     <section class="inventory-panel" aria-label="Lista de repuestos">
-      <div class="table-toolbar">
-        <div>
-          <h2>${headingTitle}</h2>
-        </div>
-      </div>
       ${inventory ? inventoryToolbar : productsToolbar}
       ${archivedView ? '' : '<p class="export-hint">Para volver a importar: máximo 1000 filas y 2 MB por archivo. Divide exportaciones mayores en lotes conservando los encabezados.</p>'}
       <div data-catalog-results>
@@ -681,9 +674,6 @@ export function customersPage({ customers = [], filters = {}, pagination, queryP
       <div class="form-actions">${headerActions}</div>
     </div>
     <section class="inventory-panel" aria-label="Lista de clientes">
-      <div class="table-toolbar">
-        <div><h2>${hasActiveFilter ? 'Resultados' : 'Todos'}</h2></div>
-      </div>
       <form class="catalog-toolbar" method="get" action="/customers" data-instant-search>
         <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por nombre" aria-label="Buscar por nombre">
         <button class="visually-hidden" type="submit">Buscar</button>
