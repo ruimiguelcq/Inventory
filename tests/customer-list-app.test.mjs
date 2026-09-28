@@ -113,6 +113,14 @@ test('la lista no tiene casillas, acciones masivas ni segmentos', async (t) => {
   assert.doesNotMatch(html, /Acciones masivas/i);
 });
 
+test('la lista no muestra el encabezado Todos', async (t) => {
+  const a = await app(t);
+  await a.post('/customers', base(a));
+  const html = await (await a.get('/customers')).text();
+  assert.doesNotMatch(html, /class="table-toolbar"/);
+  assert.doesNotMatch(html, />Todos<\/h2>|>Resultados<\/h2>/);
+});
+
 test('Agregar cliente abre la ficha de alta', async (t) => {
   const a = await app(t);
   const html = await (await a.get('/customers')).text();

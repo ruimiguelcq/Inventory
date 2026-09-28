@@ -259,6 +259,7 @@ test('desktop sections, product details and management links respect every role 
       const response = await a.get(path);
       assert.equal(response.status, 200);
       const html = await response.text();
+      assert.doesNotMatch(html, /class="table-toolbar"/);
       assert.match(html, new RegExp(`href="${path}" aria-current="page">${title}`));
       const sidebar = html.match(/<aside[\s\S]*?<\/aside>/)[0];
       assert.equal([...sidebar.matchAll(/<a /g)].length, role === 'admin' ? 6 : 4);
