@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs",
     "test": "node --test"
   },
   "dependencies": {
