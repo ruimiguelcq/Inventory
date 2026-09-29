@@ -123,6 +123,18 @@ Gestión y Administración pueden **Archivar** una lista para conservarla sin ed
 
 Las listas y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 
+## Clientes
+
+**Clientes** reúne a quién se entrega un pedido y a nombre de quién se factura. La lista es una búsqueda instantánea **solo por nombre** y muestra **Nombre del cliente** y **Ubicación** (`Ciudad, Estado, País`, vacía si no hay dirección). Pagina de **50 en 50** con Anterior y Siguiente, sin casillas ni acciones masivas. La cabecera ofrece **Exportar**, **Importar** y **Agregar cliente** en ese orden (Importar y Agregar cliente solo para Gestión y Administración).
+
+La ficha de alta y edición pide **Nombre** (obligatorio), **Apellido**, **Correo electrónico principal** (obligatorio) y **Número de teléfono principal** (obligatorio, con prefijo +58 por defecto); un bloque **Datos adicionales** desplegable guarda hasta **3 correos** y **3 teléfonos** por cliente, con el principal primero. El **Idioma** queda fijo en Español y hay **Notas** privadas que no se comparten con el cliente. El **RIF / Cédula** es obligatorio y **único** (se compara sin distinguir mayúsculas): un RIF repetido bloquea el alta o la edición y avisa del cliente existente, para no duplicar personas.
+
+Cada cliente tiene **una** dirección de entrega opcional que se abre en un modal sin perder lo escrito en el resto de la ficha: **País** fijo (Venezuela), **Nombre**, **Apellido**, **Empresa**, **Calle y número de casa**, **Apartamento, local, etc.**, **Código postal**, **Ciudad** y **Estado** (la lista de estados de Venezuela). La dirección no repite el teléfono, que ya vive en el cliente.
+
+**Importar desde Excel** y **Exportar a Excel** reutilizan el patrón de Productos: la importación muestra una **vista previa** antes de aplicar los cambios y se identifica a cada cliente por **RIF / Cédula**, la única columna obligatoria. Varios correos o teléfonos viajan en una sola celda separados por `|`, y un **RIF duplicado** bloquea el lote completo, como el P/N duplicado en Productos. La exportación incluye **Nombre**, **Apellido**, **Correo electrónico**, **Teléfonos**, **Notas**, las columnas de la dirección y **RIF / Cédula**.
+
+Consulta ve la lista y la ficha y puede **exportar**; Gestión y Administración crean, editan, importan y exportan clientes, con autorización y validación en el servidor. Los clientes se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
+
 ## Copias de seguridad
 
 La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:
@@ -131,9 +143,9 @@ La aplicación crea copias de seguridad automáticas de la base de datos sin int
 - Se guardan como archivos SQLite en `data/backups/` (o en `BACKUP_DIRECTORY`).
 - Se conservan las 10 más recientes; las anteriores se eliminan automáticamente (`BACKUP_RETENTION`).
 
-Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos, movimientos, categorías y listas de compra e integridad verificada.
+Desde **Copias de seguridad**, la cuenta administradora puede **Crear copia ahora** y ver cada copia con su fecha, tamaño, número de artículos, movimientos, categorías, listas de compra y clientes e integridad verificada.
 
-**Restaurar** una copia reemplaza cuentas, artículos, categorías, inventario, historial y listas de compra por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que sus recuentos de cuentas, artículos, movimientos, categorías y listas de compra coinciden con la copia elegida. Las copias anteriores a las categorías siguen siendo restaurables y se migran con los artículos Sin categoría. Una copia dañada aparece como **No verificable** y no puede restaurarse.
+**Restaurar** una copia reemplaza cuentas, artículos, categorías, inventario, historial, listas de compra y clientes (con sus correos, teléfonos y direcciones) por su contenido. Antes de reemplazar los datos, la aplicación guarda automáticamente una copia del estado anterior, de modo que una restauración siempre puede revertirse. El resultado se verifica: se comprueba la integridad de la base de datos restaurada y que sus recuentos de cuentas, artículos, movimientos, categorías, listas de compra y clientes coinciden con la copia elegida. Las copias anteriores a las categorías siguen siendo restaurables y se migran con los artículos Sin categoría; las copias anteriores a los clientes también se restauran y la migración añade las tablas de clientes vacías. Una copia dañada aparece como **No verificable** y no puede restaurarse.
 
 Parámetros opcionales: `BACKUP_DIRECTORY`, `BACKUP_INTERVAL_MS` y `BACKUP_RETENTION`.
 

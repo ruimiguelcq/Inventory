@@ -202,33 +202,42 @@ test('rechaza unas notas excesivas', async (t) => {
   assert.match(await (await a.get('/customers')).text(), /Todavía no hay clientes/);
 });
 
-test('una base existente gana las tablas de clientes sin perder sus datos', async (t) => {
+test('una base existente gana las tablas de clientes, conserva el estado y reabrir es idempotente', async (t) => {
   const a = await app(t);
   // Un estado completo: cuenta, artículo con inventario e historial, y un borrador de compra.
   assert.equal((await a.post('/products', { csrfToken: a.csrfToken, partNumber: 'LEGACY-1', description: 'Repuesto existente', presentation: 'KIT', initialQuantity: '7' })).status, 303);
   assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: 'equipo', password: 'equipo-seguro-123', role: 'manager' })).status, 303);
   assert.equal((await a.post('/purchase-orders', { csrfToken: a.csrfToken })).status, 303);
 
+  const inspectState = () => {
+    const db = new DatabaseSync(a.databasePath, { readOnly: true });
+    try {
+      return {
+        tables: db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('customers', 'customer_emails', 'customer_phones', 'customer_addresses') ORDER BY name").all().map((row) => row.name),
+        products: db.prepare('SELECT * FROM products ORDER BY id').all(),
+        users: db.prepare('SELECT * FROM users ORDER BY id').all(),
+        movements: db.prepare('SELECT * FROM stock_movements ORDER BY id').all(),
+        orders: db.prepare('SELECT * FROM purchase_orders ORDER BY id').all(),
+      };
+    } finally { db.close(); }
+  };
+
   // Emula el esquema anterior a la v1.3 quitando las tablas de clientes y reabriendo la base.
   await a.close();
+  const before = inspectState();
   const legacy = new DatabaseSync(a.databasePath);
-  legacy.exec('DROP TABLE customer_phones; DROP TABLE customer_emails; DROP TABLE customers;');
-  const before = {
-    products: legacy.prepare('SELECT * FROM products ORDER BY id').all(),
-    users: legacy.prepare('SELECT * FROM users ORDER BY id').all(),
-    movements: legacy.prepare('SELECT * FROM stock_movements ORDER BY id').all(),
-    orders: legacy.prepare('SELECT * FROM purchase_orders ORDER BY id').all(),
-  };
+  legacy.exec('DROP TABLE customer_phones; DROP TABLE customer_emails; DROP TABLE customer_addresses; DROP TABLE customers;');
   legacy.close();
-  await a.open();
 
-  const db = new DatabaseSync(a.databasePath, { readOnly: true });
-  try {
-    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('customers', 'customer_emails', 'customer_phones') ORDER BY name").all().map((row) => row.name);
-    assert.deepEqual(tables, ['customer_emails', 'customer_phones', 'customers']);
-    assert.deepEqual(db.prepare('SELECT * FROM products ORDER BY id').all(), before.products);
-    assert.deepEqual(db.prepare('SELECT * FROM users ORDER BY id').all(), before.users);
-    assert.deepEqual(db.prepare('SELECT * FROM stock_movements ORDER BY id').all(), before.movements);
-    assert.deepEqual(db.prepare('SELECT * FROM purchase_orders ORDER BY id').all(), before.orders);
-  } finally { db.close(); }
+  await a.open();
+  const migrated = inspectState();
+  assert.deepEqual(migrated.tables, ['customer_addresses', 'customer_emails', 'customer_phones', 'customers']);
+  assert.deepEqual(migrated.products, before.products);
+  assert.deepEqual(migrated.users, before.users);
+  assert.deepEqual(migrated.movements, before.movements);
+  assert.deepEqual(migrated.orders, before.orders);
+
+  // Reabrir una base ya migrada vuelve a ser un no-op que conserva todo.
+  await a.restart();
+  assert.deepEqual(inspectState(), migrated);
 });

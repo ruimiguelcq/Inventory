@@ -198,6 +198,53 @@ test('a retained backup can be restored even when the safety copy would prune it
   assert.doesNotMatch(inventory, /DESPUES/);
 });
 
+test('restoring a backup recovers the customers with their contacts and address', async (t) => {
+  const a = await app(t, { automaticBackups: false });
+  await seedArticle(a, { partNumber: 'ANTES', description: 'Estado anterior', quantity: '5' });
+  const customer = {
+    csrfToken: a.csrfToken, name: 'Carlos', lastName: 'Mendoza', taxId: 'V-12345678',
+    email: 'carlos@example.com', emailExtra1: 'compras@example.com',
+    phone: '+58 412 000 0001', phoneExtra1: '+58 414 000 0002', notes: 'Cliente frecuente',
+    addressFirstName: 'Carlos', addressLastName: 'Mendoza', addressCompany: 'Taller Mendoza',
+    address1: 'Av. Principal, galpón 4', address2: 'Zona Industrial', addressPostalCode: '6023',
+    addressCity: 'Puerto La Cruz', addressState: 'Anzoátegui',
+  };
+  assert.equal((await a.post('/customers', customer)).status, 303);
+  assert.equal((await a.post('/backups', { csrfToken: a.csrfToken })).status, 303);
+  const listing = await (await a.get('/backups')).text();
+  assert.match(listing, /\b1 artículo\b/);
+  assert.match(listing, /\b1 cliente\b/);
+  const file = listing.match(/href="\/backups\/restore\?file=([^"]+)"/)[1];
+
+  // Diverge from the backup: add a customer and edit the original one.
+  assert.equal((await a.post('/customers', {
+    ...customer, name: 'Otro', lastName: 'Cliente', taxId: 'V-9', email: 'otro@example.com',
+    emailExtra1: '', phoneExtra1: '', addressState: '', addressCity: '',
+  })).status, 303);
+  assert.equal((await a.post('/customers/1', { ...customer, name: 'Carlos Editado' })).status, 303);
+  assert.match(await (await a.get('/customers')).text(), /Otro/);
+
+  const confirmation = await a.get(`/backups/restore?file=${file}`);
+  const restored = await a.post('/backups/restore', {
+    csrfToken: a.csrfToken, file, confirmationToken: a.token(await confirmation.text(), 'confirmationToken'),
+  });
+  assert.equal(restored.status, 303);
+  assert.equal(restored.headers.get('location'), '/backups?restored=1');
+
+  const customers = await (await a.get('/customers')).text();
+  assert.match(customers, /Carlos Mendoza/);
+  assert.doesNotMatch(customers, /Otro|Carlos Editado/);
+  assert.match(customers, /Puerto La Cruz, Anzoátegui, Venezuela/);
+  const detail = await (await a.get('/customers/1')).text();
+  assert.match(detail, /compras@example\.com/);
+  assert.match(detail, /\+58 414 000 0002/);
+  assert.match(detail, /Cliente frecuente/);
+
+  const verified = await (await a.get('/backups?restored=1')).text();
+  assert.match(verified, /Restauración completada y verificada/);
+  assert.match(verified, /1 cliente\b/);
+});
+
 test('old automatic backups are pruned while the newest survive', async (t) => {
   const a = await app(t, { backupRetention: 3, automaticBackups: false });
   await seedArticle(a);

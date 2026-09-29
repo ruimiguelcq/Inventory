@@ -1075,8 +1075,9 @@ function backupCounts(backup) {
   const articles = backup.products ?? 0;
   const movements = backup.movements ?? 0;
   const purchases = backup.purchaseOrders ?? 0;
+  const customers = backup.customers ?? 0;
   const images = backup.images ?? 0;
-  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías · ${purchases} ${purchases === 1 ? 'lista de compra' : 'listas de compra'} · ${images} ${images === 1 ? 'imagen' : 'imágenes'}`;
+  return `${articles} ${articles === 1 ? 'artículo' : 'artículos'} · ${movements} ${movements === 1 ? 'movimiento' : 'movimientos'} · ${backup.categories ?? 0} categorías · ${purchases} ${purchases === 1 ? 'lista de compra' : 'listas de compra'} · ${customers} ${customers === 1 ? 'cliente' : 'clientes'} · ${images} ${images === 1 ? 'imagen' : 'imágenes'}`;
 }
 
 export function backupsPage({ backups, lastRestore = null, error = '', message = '', ...session }) {
