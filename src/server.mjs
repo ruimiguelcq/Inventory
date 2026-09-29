@@ -20,6 +20,7 @@ import {
   listCustomerPhones,
   listCustomers,
   listOrderLines,
+  listOrderLinesForOrders,
   listOrders,
   listProducts,
   listCategories,
@@ -33,13 +34,13 @@ import {
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { createOrderFromForm, OrderError, orderFormValues } from './orders.mjs';
+import { createOrderFromForm, filterOrders, OrderError, orderFormValues, paginateOrders } from './orders.mjs';
 import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, previewCustomerImport, applyImport, applyCustomerImport, ImportError, parseImportView } from './imports.mjs';
-import { exportCustomers, exportPurchaseOrder, exportView, parseExportView, selectExportCustomers, selectExportProducts, ExportError } from './exports.mjs';
+import { exportCustomers, exportOrders, exportPurchaseOrder, exportView, parseExportView, selectExportCustomers, selectExportOrders, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
@@ -370,6 +371,28 @@ export function createInventoryServer({
     };
   }
 
+  function orderOptions(params) {
+    // The order list searches by number or customer, filters by channel and pages at a fixed 50.
+    const query = (params.get('q') ?? '').trim();
+    const channel = (params.get('channel') ?? '').trim();
+    const queryParams = new URLSearchParams();
+    if (query) queryParams.set('q', query);
+    if (channel) queryParams.set('channel', channel);
+    const page = params.get('page');
+    if (page) queryParams.set('page', page);
+    const { orders, pagination } = paginateOrders(filterOrders(listOrders(database), queryParams), queryParams);
+    const linesByOrder = {};
+    for (const line of listOrderLinesForOrders(database, orders.map((order) => order.id))) {
+      (linesByOrder[line.order_id] ??= []).push(line);
+    }
+    return {
+      orders, pagination, linesByOrder,
+      filters: { q: query, channel },
+      queryParams,
+      channels: listChannels(database),
+    };
+  }
+
   function runAutomaticBackup() {
     try {
       createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
@@ -497,6 +520,16 @@ export function createInventoryServer({
             });
             return response.end(buffer);
           }
+          if (view === 'orders') {
+            const buffer = await exportOrders(selectExportOrders(listOrders(database), params));
+            response.writeHead(200, {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': 'attachment; filename="pedidos.xlsx"',
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            });
+            return response.end(buffer);
+          }
           const viewParams = new URLSearchParams(params);
           // Inventory only ever exports active articles; products honors its state filter.
           if (view === 'inventory') viewParams.set('state', 'active');
@@ -513,6 +546,9 @@ export function createInventoryServer({
           if (!(error instanceof ExportError)) throw error;
           if (view === 'customers') {
             return sendHtml(response, customersPage({ ...session, ...customerOptions(params), message: error.message }), 400);
+          }
+          if (view === 'orders') {
+            return sendHtml(response, ordersPage({ ...session, ...orderOptions(params), error: error.message }), 400);
           }
           const render = view === 'products' ? productsPage : inventoryPage;
           const fallback = new URLSearchParams(params);
@@ -725,7 +761,7 @@ export function createInventoryServer({
       const orderMatch = url.pathname.match(/^\/orders\/(\d+)$/);
       if (url.pathname === '/orders' || url.pathname === '/orders/new' || orderMatch) {
         if (request.method === 'GET' && url.pathname === '/orders') {
-          return sendHtml(response, ordersPage({ ...session, orders: listOrders(database) }));
+          return sendHtml(response, ordersPage({ ...session, ...orderOptions(url.searchParams) }));
         }
         if (request.method === 'GET' && url.pathname === '/orders/new') {
           if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);

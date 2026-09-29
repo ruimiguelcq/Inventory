@@ -1,10 +1,11 @@
 import ExcelJS from 'exceljs';
 import { filterProducts } from './products.mjs';
-import { filterCustomers } from './customers.mjs';
+import { customerName, filterCustomers } from './customers.mjs';
+import { filterOrders } from './orders.mjs';
 
 export class ExportError extends Error {}
 
-export const EXPORT_VIEWS = ['products', 'inventory', 'customers'];
+export const EXPORT_VIEWS = ['products', 'inventory', 'customers', 'orders'];
 
 // Productos exporta el catálogo descriptivo con su categoría; Inventario solo P/N, nombre e inventario.
 export function parseExportView(params) {
@@ -23,6 +24,12 @@ export function selectExportProducts(products, params) {
 export function selectExportCustomers(customers, params) {
   if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
   return filterCustomers(customers, params);
+}
+
+// The orders export covers every order matching the search and channel filter, across all pages.
+export function selectExportOrders(orders, params) {
+  if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
+  return filterOrders(orders, params);
 }
 
 async function writeSheet(columns, products, title) {
@@ -129,6 +136,38 @@ function customerExportRow(customer) {
 
 export function exportCustomers(customers) {
   return writeSheet(CUSTOMER_COLUMNS, customers.map(customerExportRow), 'Clientes');
+}
+
+// Pedidos carries one row per order with the list columns; the breakdown of articles is not
+// included, only how many each order holds.
+const ORDER_STATUS_LABELS = { active: 'Activo', annulled: 'Anulado', open: 'Abierto', completed: 'Completado' };
+
+const ORDER_COLUMNS = [
+  { header: 'Pedido', key: 'number', width: 14, style: { numFmt: '@' } },
+  { header: 'Fecha', key: 'created_at', width: 22 },
+  { header: 'Cliente', key: 'customer', width: 32 },
+  { header: 'Canal', key: 'channel', width: 20 },
+  { header: 'Descuento', key: 'discount', width: 14, style: { numFmt: '0.00%' } },
+  { header: 'Total', key: 'total', width: 14, style: { numFmt: '0.00' } },
+  { header: 'Artículos', key: 'articles', width: 12 },
+  { header: 'Estado', key: 'status', width: 14 },
+];
+
+function orderExportRow(order) {
+  return {
+    number: `#${order.number}`,
+    created_at: order.created_at,
+    customer: customerName({ name: order.customer_name, last_name: order.customer_last_name }),
+    channel: order.channel_name,
+    discount: order.discount_bps / 10000,
+    total: order.total_cents / 100,
+    articles: order.line_count,
+    status: ORDER_STATUS_LABELS[order.status] ?? order.status,
+  };
+}
+
+export function exportOrders(orders) {
+  return writeSheet(ORDER_COLUMNS, orders.map(orderExportRow), 'Pedidos');
 }
 
 // A purchase export carries only P/N, name and requested quantity, with no prices, taxes,

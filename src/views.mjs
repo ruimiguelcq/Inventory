@@ -504,37 +504,106 @@ function orderLineRow(line, products) {
   </tr>`;
 }
 
-// The list keeps the same pattern as the other sections: a clean heading, a Crear pedido button for
-// management, and one row per order. Search, filters and export arrive with the list ticket.
-export function ordersPage({ orders = [], error = '', ...session }) {
-  const canManage = canManageInventory(session.role);
-  const createButton = canManage ? '<a class="button button-primary" href="/orders/new">Crear pedido</a>' : '';
-  const rows = orders.map((order) => `<tr>
-    <td class="part-number"><a href="/orders/${order.number}">#${order.number}</a></td>
-    <td><time datetime="${escapeHtml(timestampAttribute(order.created_at))}">${escapeHtml(formatTimestamp(order.created_at))}</time></td>
-    <td class="align-left">${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</td>
-    <td>${escapeHtml(order.channel_name)}</td>
-    <td>${escapeHtml(formatPercent(order.discount_bps))}</td>
-    <td class="quantity-cell">${escapeHtml(formatUsd(order.total_cents))}</td>
-    <td><span class="status-tag">${escapeHtml(orderStatusLabel(order.status))}</span></td>
+// The Artículos cell reveals the breakdown of the order in place, without leaving the list:
+// product, P/N, presentation and quantity. A base disclosure element keeps it script-free.
+function orderArticlesCell(order, lines) {
+  const count = order.line_count ?? lines.length;
+  const label = `${count} ${count === 1 ? 'artículo' : 'artículos'}`;
+  if (!lines.length) return `<td class="order-articles"><span class="muted">${label}</span></td>`;
+  const rows = lines.map((line) => `<tr>
+    <td class="align-left">${escapeHtml(line.description)}</td>
+    <td class="part-number">${escapeHtml(line.part_number)}</td>
+    <td>${escapeHtml(presentationLabel(line.presentation))}</td>
+    <td class="quantity-cell">${line.quantity}</td>
   </tr>`).join('');
+  return `<td class="order-articles">
+    <details class="order-breakdown">
+      <summary>${label}</summary>
+      <table><thead><tr>
+        <th scope="col" class="align-left">Producto</th><th scope="col">P/N</th>
+        <th scope="col">Presentación</th><th scope="col" class="align-right">Cantidad</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </details>
+  </td>`;
+}
+
+// The list keeps the same pattern as the other sections: a clean heading with only Exportar and
+// Crear pedido, instant search by number or customer, a channel filter, a fixed 50-row pager and
+// the article breakdown revealed from the Artículos cell.
+export function ordersPage({ orders = [], filters = {}, pagination, queryParams = new URLSearchParams(), channels = [], linesByOrder = {}, error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const hasActiveFilter = Boolean(filters.q || filters.channel);
+  // The complete export follows the visible search and channel filter, across all pages.
+  const exportParams = new URLSearchParams(queryParams);
+  exportParams.delete('page');
+  exportParams.set('view', 'orders');
+  exportParams.set('scope', 'all');
+  const exportHref = `/exports?${exportParams.toString()}`;
+  const headerActions = `<a class="button button-secondary" href="${escapeHtml(exportHref)}">Exportar</a>
+    ${canManage ? '<a class="button button-primary" href="/orders/new">Crear pedido</a>' : ''}`;
+
+  const rows = orders.map((order) => {
+    const lines = linesByOrder[order.id] ?? [];
+    return `<tr>
+      <td class="part-number"><a href="/orders/${order.number}">#${order.number}</a></td>
+      <td><time datetime="${escapeHtml(timestampAttribute(order.created_at))}">${escapeHtml(formatTimestamp(order.created_at))}</time></td>
+      <td class="align-left">${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</td>
+      <td>${escapeHtml(order.channel_name)}</td>
+      <td>${escapeHtml(formatPercent(order.discount_bps))}</td>
+      <td class="quantity-cell">${escapeHtml(formatUsd(order.total_cents))}</td>
+      ${orderArticlesCell(order, lines)}
+      <td><span class="status-tag">${escapeHtml(orderStatusLabel(order.status))}</span></td>
+    </tr>`;
+  }).join('');
+
+  const channelOptions = channels.map((channel) => `<option value="${channel.id}" ${String(channel.id) === String(filters.channel ?? '') ? 'selected' : ''}>${escapeHtml(channel.name)}</option>`).join('');
+
+  const pageLink = (number, label) => {
+    const params = new URLSearchParams(queryParams);
+    params.set('page', number);
+    return `<a class="button button-secondary" href="/orders?${escapeHtml(params.toString())}">${label}</a>`;
+  };
+  const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
+    <span>${pagination.total} pedidos · Página ${pagination.page} de ${pagination.pages}</span>
+    <div>${pagination.page > 1 ? pageLink(pagination.page - 1, 'Anterior') : ''}
+      ${pagination.page < pagination.pages ? pageLink(pagination.page + 1, 'Siguiente') : ''}</div>
+  </nav>` : '';
+
+  const emptyState = hasActiveFilter
+    ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Sin resultados</h3>
+      <p>Ningún pedido coincide con la búsqueda o el filtro.</p>
+      <a class="button button-secondary" href="/orders">Limpiar filtros</a></div>`
+    : `<div class="empty-state">
+      <span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Todavía no hay pedidos</h3>
+      <p>${canManage ? 'Crea un pedido: elige cliente, canal y artículos; el inventario se descuenta al guardar.' : 'Cuando Gestión cree un pedido, aparecerá aquí.'}</p>
+    </div>`;
 
   const content = `
     <div class="page-heading">
       <div><h1>Pedidos</h1>
         <p class="page-subtitle">Cada pedido descuenta inventario al crearse y queda registrado en el historial de cada artículo.</p></div>
-      <div class="form-actions">${createButton}</div>
+      <div class="form-actions">${headerActions}</div>
     </div>
     ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
     <section class="inventory-panel" aria-label="Lista de pedidos">
-      ${orders.length ? `<div class="table-scroll"><table><thead><tr>
-        <th scope="col">Pedido</th><th scope="col">Fecha (UTC)</th><th scope="col" class="align-left">Cliente</th>
-        <th scope="col">Canal</th><th scope="col">Descuento</th><th scope="col" class="align-right">Total</th><th scope="col">Estado</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty-state">
-        <span class="empty-icon" aria-hidden="true">⌁</span>
-        <h3>Todavía no hay pedidos</h3>
-        <p>${canManage ? 'Crea un pedido: elige cliente, canal y artículos; el inventario se descuenta al guardar.' : 'Cuando Gestión cree un pedido, aparecerá aquí.'}</p>
-      </div>`}
+      <form class="catalog-toolbar" method="get" action="/orders" data-instant-search>
+        <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por pedido o cliente" aria-label="Buscar por pedido o cliente">
+        <select name="channel" aria-label="Canal">
+          <option value="">Todos los canales</option>
+          ${channelOptions}
+        </select>
+        <button class="visually-hidden" type="submit">Buscar</button>
+      </form>
+      <div data-catalog-results>
+        ${orders.length ? `<div class="table-scroll"><table><thead><tr>
+          <th scope="col">Pedido</th><th scope="col">Fecha (UTC)</th><th scope="col" class="align-left">Cliente</th>
+          <th scope="col">Canal</th><th scope="col">Descuento</th><th scope="col" class="align-right">Total</th>
+          <th scope="col">Artículos</th><th scope="col">Estado</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>` : emptyState}
+        ${pager}
+      </div>
     </section>`;
   return page('Pedidos', content, { ...session, active: 'orders' });
 }

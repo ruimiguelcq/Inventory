@@ -588,6 +588,20 @@ export function listOrders(database, kind = 'order') {
     ${ORDER_FROM} WHERE orders.kind = ? ORDER BY orders.number DESC`).all(kind);
 }
 
+// The list breakdown loads the lines of a whole page in one query, ordered per order and position.
+export function listOrderLinesForOrders(database, orderIds) {
+  if (!orderIds.length) return [];
+  const placeholders = orderIds.map(() => '?').join(', ');
+  return database.prepare(`
+    SELECT lines.order_id, lines.quantity, lines.unit_price_cents, lines.position,
+      products.part_number, products.description, products.presentation
+    FROM order_lines lines
+    JOIN products ON products.id = lines.product_id
+    WHERE lines.order_id IN (${placeholders})
+    ORDER BY lines.order_id, lines.position, lines.id
+  `).all(...orderIds);
+}
+
 // Lines keep the price snapshot taken when the order was created and join the live product record.
 export function listOrderLines(database, orderId) {
   return database.prepare(`

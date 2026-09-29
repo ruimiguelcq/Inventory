@@ -135,6 +135,16 @@ Cada cliente tiene **una** dirección de entrega opcional que se abre en un moda
 
 Consulta ve la lista y la ficha y puede **exportar**; Gestión y Administración crean, editan, importan y exportan clientes, con autorización y validación en el servidor. Los clientes se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 
+## Pedidos
+
+**Pedidos** registra las compras de los clientes por canal. La lista muestra exactamente **Pedido**, **Fecha**, **Cliente**, **Canal**, **Descuento**, **Total**, **Artículos** y **Estado**. La búsqueda es instantánea **por número de pedido y por nombre de cliente**, con un filtro por **Canal**; pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. Al pulsar **Artículos** se despliega el desglose (producto, P/N, presentación y cantidad) sin salir de la lista. La cabecera es limpia, solo con **Exportar** y **Crear pedido** (este último solo para Gestión y Administración).
+
+Gestión y Administración crean un **Nuevo pedido** eligiendo un **cliente registrado**, el **canal** de una lista editable (sembrada con Online, Tienda y Correo) y líneas del catálogo con su disponibilidad. El **precio unitario** viene del producto y no se edita; se fija la **cantidad**, se aplica un **descuento en %** y se guardan **Notas** privadas. El **Total** es el subtotal menos el descuento, en USD con dos decimales. Al crear el pedido el inventario se **descuenta** y cada línea deja un movimiento con origen Pedido en el historial del producto; no se permite pedir más que el disponible. La ficha muestra el número (desde **#1001**), la fecha automática, el cliente, el canal, las líneas, el descuento, el total y las notas. Consulta puede ver y exportar, pero no crear.
+
+Cualquier miembro del equipo con sesión iniciada puede **Exportar a Excel** la lista. El archivo `pedidos.xlsx` contiene una fila por pedido con las columnas de la lista (**Pedido**, **Fecha**, **Cliente**, **Canal**, **Descuento**, **Total**, **Artículos**, **Estado**) y sin el desglose. La exportación completa respeta la búsqueda y el canal y recorre **todas las páginas**.
+
+Los pedidos y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
+
 ## Copias de seguridad
 
 La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:

@@ -8,6 +8,7 @@ import {
   insertOrderLine,
   takeOrderNumber,
 } from './database.mjs';
+import { customerName } from './customers.mjs';
 import { canManageInventory } from './permissions.mjs';
 import { recordStock } from './stock.mjs';
 
@@ -20,6 +21,33 @@ export class OrderError extends Error {
 
 export const MAX_CHANNEL = 100;
 export const MAX_NOTES = 2000;
+
+export const ORDERS_PER_PAGE = 50;
+
+// The list search matches the order number (with or without a leading #) and the customer name;
+// the channel filter is exact by id. Both are read from the query string and combined.
+export function filterOrders(orders, params) {
+  const query = (params.get('q') ?? '').trim().toLowerCase();
+  const channel = (params.get('channel') ?? '').trim();
+  const needle = query.replace(/^#/, '');
+  return orders.filter((order) => {
+    if (channel && String(order.channel_id) !== channel) return false;
+    if (!query) return true;
+    return String(order.number).includes(needle)
+      || customerName({ name: order.customer_name, last_name: order.customer_last_name }).toLowerCase().includes(query);
+  });
+}
+
+export function paginateOrders(orders, params) {
+  const total = orders.length;
+  const pages = Math.max(1, Math.ceil(total / ORDERS_PER_PAGE));
+  const requestedPage = Number(params.get('page'));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pages) : 1;
+  return {
+    orders: orders.slice((page - 1) * ORDERS_PER_PAGE, page * ORDERS_PER_PAGE),
+    pagination: { page, pageSize: ORDERS_PER_PAGE, total, pages },
+  };
+}
 
 function positiveId(value) {
   return typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value));
