@@ -10,13 +10,17 @@ import {
   findCustomerAddress,
   findUser,
   findProduct,
+  findOrderByNumber,
   findPurchaseOrder,
   findUserByUsername,
   hasAdministrator,
   insertUser,
+  listChannels,
   listCustomerEmails,
   listCustomerPhones,
   listCustomers,
+  listOrderLines,
+  listOrders,
   listProducts,
   listCategories,
   listProductTypes,
@@ -28,7 +32,8 @@ import {
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { createOrderFromForm, OrderError, orderFormValues } from './orders.mjs';
 import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
@@ -516,7 +521,7 @@ export function createInventoryServer({
       }
 
       // Every private mutation requires gestión, including future stock/archive routes.
-      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname) || url.pathname === '/customers/new' || /^\/customers\/\d+\/edit$/.test(url.pathname))) {
+      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname) || url.pathname === '/customers/new' || /^\/customers\/\d+\/edit$/.test(url.pathname) || url.pathname === '/orders/new')) {
         return sendHtml(response, forbiddenPage(session), 403);
       }
 
@@ -712,6 +717,44 @@ export function createInventoryServer({
             if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
             return renderPurchase({ values: Object.fromEntries(form), error: error.message });
           }
+        }
+      }
+
+      // Orders: read-only for every role, created by Gestión and Administración. Creating discounts
+      // stock and records an 'order' movement per line; the detail shows the whole ficha.
+      const orderMatch = url.pathname.match(/^\/orders\/(\d+)$/);
+      if (url.pathname === '/orders' || url.pathname === '/orders/new' || orderMatch) {
+        if (request.method === 'GET' && url.pathname === '/orders') {
+          return sendHtml(response, ordersPage({ ...session, orders: listOrders(database) }));
+        }
+        if (request.method === 'GET' && url.pathname === '/orders/new') {
+          if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+          return sendHtml(response, orderFormPage({
+            ...session, customers: listCustomers(database), channels: listChannels(database), products: listProducts(database),
+          }));
+        }
+        if (request.method === 'POST' && url.pathname === '/orders') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          // A role may change while the request body is arriving. Check again at the write boundary.
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            const number = createOrderFromForm(database, session.userId, form);
+            return redirect(response, `/orders/${number}`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            return sendHtml(response, orderFormPage({
+              ...session, customers: listCustomers(database), channels: listChannels(database), products: listProducts(database),
+              values: orderFormValues(form), error: error.message,
+            }), error.status);
+          }
+        }
+        if (request.method === 'GET' && orderMatch) {
+          const order = findOrderByNumber(database, 'order', Number(orderMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          return sendHtml(response, orderDetailPage({ ...session, order, lines: listOrderLines(database, order.id) }));
         }
       }
 

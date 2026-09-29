@@ -3,7 +3,9 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 // The movement source is shared by the fresh table, the ALTER migration and the table rebuild.
-const MOVEMENT_SOURCE_COLUMN = "source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'creation'))";
+// Orders discount and restock inventory through the same history with the 'order' origin.
+const MOVEMENT_SOURCES = ['manual', 'import', 'creation', 'order'];
+const MOVEMENT_SOURCE_COLUMN = `source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN (${MOVEMENT_SOURCES.map((source) => `'${source}'`).join(', ')}))`;
 
 const STOCK_MOVEMENT_COLUMNS = `
       id INTEGER PRIMARY KEY,
@@ -29,6 +31,10 @@ export const DEFAULT_CATEGORIES = [
   'Eléctrico, arranque y control',
   'Montaje y accesorios',
 ];
+
+// Sales channels start with a sensible set and grow on save, following categories, types and
+// suppliers. They are ensured on every open and never remove an existing channel.
+export const DEFAULT_CHANNELS = ['Online', 'Tienda', 'Correo'];
 
 export function openDatabase(databasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });
@@ -116,8 +122,8 @@ export function openDatabase(databasePath) {
   `);
   if (!database.prepare('PRAGMA table_info(stock_movements)').all().some((column) => column.name === 'source')) {
     database.exec(`ALTER TABLE stock_movements ADD COLUMN ${MOVEMENT_SOURCE_COLUMN}`);
-  } else if (!(database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'stock_movements'").get()?.sql ?? '').includes("'creation'")) {
-    rebuildStockMovementsForCreation(database);
+  } else if (MOVEMENT_SOURCES.some((source) => !(database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'stock_movements'").get()?.sql ?? '').includes(`'${source}'`))) {
+    rebuildStockMovementsForSources(database);
   }
   // Purchase drafts live in the same SQLite file as the rest of the state, so the
   // accepted backup/restore ADR already covers them (see docs/adr/0001).
@@ -190,12 +196,61 @@ export function openDatabase(databasePath) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  // Orders and drafts share one model: a single table discriminated by kind, with one lines table.
+  // An order is numbered from 1001 and is active/annulled; a draft is numbered from 1 (shown #D…)
+  // and is open/completed. Channels are a named list that grows on save.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS channels (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) BETWEEN 1 AND 100)
+    );
+
+    CREATE TABLE IF NOT EXISTS order_sequences (
+      kind TEXT PRIMARY KEY CHECK (kind IN ('order', 'draft')),
+      next_number INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('order', 'draft')),
+      number INTEGER NOT NULL CHECK (number > 0),
+      status TEXT NOT NULL CHECK (status IN ('active', 'annulled', 'open', 'completed')),
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      channel_id INTEGER NOT NULL REFERENCES channels(id),
+      discount_bps INTEGER NOT NULL DEFAULT 0 CHECK (discount_bps BETWEEN 0 AND 10000),
+      notes TEXT,
+      total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
+      source_draft_number INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (kind, number)
+    );
+
+    CREATE TABLE IF NOT EXISTS order_lines (
+      id INTEGER PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      quantity INTEGER NOT NULL CHECK (quantity > 0 AND quantity <= 9007199254740991),
+      unit_price_cents INTEGER NOT NULL DEFAULT 0 CHECK (unit_price_cents >= 0),
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (order_id, product_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS order_lines_order ON order_lines(order_id, position, id);
+  `);
+  const seedChannel = database.prepare('INSERT INTO channels (name) VALUES (?) ON CONFLICT(name) DO NOTHING');
+  for (const name of DEFAULT_CHANNELS) seedChannel.run(name);
+  // Numbers are never reused: annulling an order or deleting a draft leaves the sequence advanced.
+  database.prepare("INSERT OR IGNORE INTO order_sequences (kind, next_number) VALUES ('order', 1001)").run();
+  database.prepare("INSERT OR IGNORE INTO order_sequences (kind, next_number) VALUES ('draft', 1)").run();
   return database;
 }
 
-// SQLite cannot change an existing CHECK constraint, so the early "creation" source
-// needs the whole table rebuilt and its rows copied over.
-function rebuildStockMovementsForCreation(database) {
+// SQLite cannot change an existing CHECK constraint, so a movement table missing a newer
+// source (such as "creation" or "order") needs the whole table rebuilt and its rows copied over.
+function rebuildStockMovementsForSources(database) {
   database.exec('BEGIN IMMEDIATE');
   try {
     database.exec(`
@@ -483,4 +538,66 @@ export function replaceCustomerAddress(database, customerId, address) {
     INSERT INTO customer_addresses (customer_id, country, first_name, last_name, company, address1, address2, postal_code, city, state)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(customerId, address.country, address.first_name, address.last_name, address.company, address.address1, address.address2, address.postal_code, address.city, address.state);
+}
+
+export function listChannels(database) {
+  return database.prepare('SELECT id, name FROM channels ORDER BY name COLLATE NOCASE, id').all();
+}
+
+export function findChannel(database, id) {
+  return database.prepare('SELECT id, name FROM channels WHERE id = ?').get(id);
+}
+
+// The caller owns the transaction; taking a number advances the non-reusable sequence for a kind.
+export function takeOrderNumber(database, kind) {
+  const row = database.prepare('SELECT next_number FROM order_sequences WHERE kind = ?').get(kind);
+  database.prepare('UPDATE order_sequences SET next_number = next_number + 1 WHERE kind = ?').run(kind);
+  return row.next_number;
+}
+
+export function insertOrder(database, order) {
+  return database.prepare(`
+    INSERT INTO orders (kind, number, status, customer_id, channel_id, discount_bps, notes, total_cents, source_draft_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(order.kind, order.number, order.status, order.customerId, order.channelId, order.discountBps,
+    order.notes, order.totalCents, order.sourceDraftNumber ?? null);
+}
+
+export function insertOrderLine(database, orderId, line, position) {
+  return database.prepare(`
+    INSERT INTO order_lines (order_id, product_id, quantity, unit_price_cents, position)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(orderId, line.productId, line.quantity, line.unitPriceCents, position);
+}
+
+// Orders, drafts and their list join the live customer and channel names the same way.
+const ORDER_COLUMNS = `orders.*, customers.name AS customer_name, customers.last_name AS customer_last_name,
+  channels.name AS channel_name`;
+const ORDER_FROM = `FROM orders
+  JOIN customers ON customers.id = orders.customer_id
+  JOIN channels ON channels.id = orders.channel_id`;
+
+export function findOrderByNumber(database, kind, number) {
+  return database.prepare(`SELECT ${ORDER_COLUMNS} ${ORDER_FROM} WHERE orders.kind = ? AND orders.number = ?`).get(kind, number);
+}
+
+// The list adds the line count and returns the newest orders first.
+export function listOrders(database, kind = 'order') {
+  return database.prepare(`SELECT ${ORDER_COLUMNS},
+      (SELECT COUNT(*) FROM order_lines lines WHERE lines.order_id = orders.id) AS line_count
+    ${ORDER_FROM} WHERE orders.kind = ? ORDER BY orders.number DESC`).all(kind);
+}
+
+// Lines keep the price snapshot taken when the order was created and join the live product record.
+export function listOrderLines(database, orderId) {
+  return database.prepare(`
+    SELECT lines.id AS line_id, lines.quantity, lines.unit_price_cents, lines.position,
+      products.part_number, products.description, products.presentation, products.archived,
+      categories.name AS category_name
+    FROM order_lines lines
+    JOIN products ON products.id = lines.product_id
+    LEFT JOIN categories ON categories.id = products.category_id
+    WHERE lines.order_id = ?
+    ORDER BY lines.position, lines.id
+  `).all(orderId);
 }

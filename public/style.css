@@ -110,8 +110,24 @@ button, input, select, textarea { font: inherit; }
 .sidebar-link:hover { background: #e3e3e3; }
 .sidebar-link.is-active { background: #1f1f1f; color: #fff; font-weight: 600; }
 .sidebar-link.is-active .sidebar-icon { color: #fff; }
+.sidebar-group { display: flex; flex-direction: column; }
+.sidebar-row { display: flex; align-items: center; }
+.sidebar-row .sidebar-link { flex: 1; min-width: 0; }
+.sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-right: 4px; border: 0; border-radius: 6px; background: transparent; color: #5c5c5c; font-size: 11px; line-height: 1; cursor: pointer; }
+.sidebar-toggle:hover { background: #e3e3e3; }
+.sidebar-children { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-children[hidden] { display: none; }
 .sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid #dedede; }
 .sidebar-section-title { margin: 0 0 6px; padding: 0 12px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* Alta de pedido: la tabla de líneas deja el precio unitario en solo lectura y la columna de
+   importes alineada a la derecha; el resumen muestra subtotal, descuento y total en dólares. */
+.order-lines select { width: 100%; min-width: 220px; }
+.order-lines .line-quantity { width: 90px; }
+.order-totals { display: flex; flex-direction: column; gap: 8px; }
+.order-totals > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.order-discount input { width: 90px; }
+.order-total { padding-top: 8px; border-top: 1px solid var(--line); font-size: 16px; font-weight: 600; }
 .authenticated .page-shell { width: auto; margin-left: 216px; padding: 28px 28px 64px; }
 .page-heading .form-actions { padding: 0; background: transparent; flex-wrap: wrap; }
 .product-details { display: grid; grid-template-columns: max-content 1fr; gap: 12px 24px; }

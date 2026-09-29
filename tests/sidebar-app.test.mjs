@@ -50,6 +50,7 @@ test('el lateral conserva los destinos actuales y suma Clientes', async (t) => {
     { href: '/products', label: 'Productos' },
     { href: '/inventory', label: 'Inventario' },
     { href: '/purchase-orders', label: 'Órdenes de compra' },
+    { href: '/orders', label: 'Pedidos' },
     { href: '/customers', label: 'Clientes' },
     { href: '/users', label: 'Cuentas y permisos' },
     { href: '/backups', label: 'Copias de seguridad' },
@@ -60,7 +61,7 @@ test('el estilo Shopify trae iconos, pastilla activa y la administración abajo'
   const a = await app(t);
   const sidebar = sidebarOf(await (await a.get('/products')).text());
 
-  const topLevel = ['Productos', 'Clientes', 'Cuentas y permisos', 'Copias de seguridad'];
+  const topLevel = ['Productos', 'Pedidos', 'Clientes', 'Cuentas y permisos', 'Copias de seguridad'];
   for (const anchor of linksOf(sidebar)) {
     const label = textOf(anchor);
     if (topLevel.includes(label)) assert.match(anchor, /<span class="sidebar-icon" aria-hidden="true"><svg/, label);
@@ -69,6 +70,9 @@ test('el estilo Shopify trae iconos, pastilla activa y la administración abajo'
   for (const anchor of linksOf(sidebar).filter((entry) => /sidebar-child/.test(entry))) {
     assert.match(anchor, /sidebar-child/);
   }
+  // Productos y Pedidos son grupos plegables con su botón de despliegue.
+  assert.equal([...sidebar.matchAll(/data-sidebar-group/g)].length, 2);
+  assert.equal([...sidebar.matchAll(/data-sidebar-toggle/g)].length, 2);
   assert.match(sidebar, /<p class="sidebar-section-title">Configuración<\/p>/);
   // La administración va después de los destinos principales, como Configuración.
   assert.ok(sidebar.indexOf('>Clientes<') < sidebar.indexOf('>Configuración<'));
@@ -80,6 +84,7 @@ test('cada ruta deja activa su enlace, con aria-current y pastilla', async (t) =
     ['/products', '/products'],
     ['/inventory', '/inventory'],
     ['/purchase-orders', '/purchase-orders'],
+    ['/orders', '/orders'],
     ['/customers', '/customers'],
     ['/users', '/users'],
     ['/backups', '/backups'],
@@ -98,6 +103,6 @@ test('Consulta ve Clientes pero no la administración', async (t) => {
   await a.signIn('consulta', 'consulta-segura-123');
   const sidebar = sidebarOf(await (await a.get('/products')).text());
   const hrefs = linksOf(sidebar).map(hrefOf);
-  assert.deepEqual(hrefs, ['/products', '/inventory', '/purchase-orders', '/customers']);
+  assert.deepEqual(hrefs, ['/products', '/inventory', '/purchase-orders', '/orders', '/customers']);
   assert.doesNotMatch(sidebar, /Configuración|Cuentas y permisos|Copias de seguridad/);
 });

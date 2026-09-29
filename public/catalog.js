@@ -165,6 +165,109 @@ for (const combo of document.querySelectorAll('[data-combo]')) {
   });
 }
 
+// Collapsible sidebar groups. Without JavaScript the list stays open, so nothing is hidden.
+for (const toggle of document.querySelectorAll('[data-sidebar-toggle]')) {
+  const children = toggle.closest('[data-sidebar-group]')?.querySelector('[data-sidebar-children]');
+  if (!children) continue;
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') !== 'false';
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    children.hidden = expanded;
+    const glyph = toggle.querySelector('span');
+    if (glyph) glyph.textContent = expanded ? '▸' : '▾';
+  });
+}
+
+// Alta de pedido: line rows pick a catalog article, show its availability and snapshot price, and
+// the subtotal, discount and total update live. The server recomputes everything on save.
+const orderForm = document.querySelector('[data-order-form]');
+if (orderForm) {
+  const linesBody = orderForm.querySelector('[data-order-lines]');
+  const template = orderForm.querySelector('[data-order-line-template]');
+  const discountInput = orderForm.querySelector('[data-order-discount]');
+  const subtotalOutput = orderForm.querySelector('[data-order-subtotal]');
+  const totalOutput = orderForm.querySelector('[data-order-total]');
+  const money = (cents) => `$${(cents / 100).toFixed(2)}`;
+  const partsOf = (row) => ({
+    select: row.querySelector('[data-order-product]'),
+    quantity: row.querySelector('[data-order-quantity]'),
+    available: row.querySelector('[data-order-available]'),
+    price: row.querySelector('[data-order-price]'),
+    lineTotal: row.querySelector('[data-order-line-total]'),
+  });
+  const chosenOption = (row) => {
+    const { select } = partsOf(row);
+    const option = select?.options[select.selectedIndex];
+    return option && option.value ? option : null;
+  };
+  const positiveQuantity = (row) => {
+    const quantity = Number(partsOf(row).quantity?.value);
+    return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : null;
+  };
+  const refreshRow = (row) => {
+    const { available, price, lineTotal } = partsOf(row);
+    const option = chosenOption(row);
+    const quantity = positiveQuantity(row);
+    if (!option) {
+      if (available) available.textContent = '—';
+      if (price) price.textContent = '—';
+      if (lineTotal) lineTotal.textContent = '—';
+      return;
+    }
+    const unitPrice = Number(option.dataset.price ?? 0);
+    if (available) available.textContent = option.dataset.available ?? '—';
+    if (price) price.textContent = money(unitPrice);
+    if (lineTotal) lineTotal.textContent = quantity ? money(unitPrice * quantity) : '—';
+  };
+  const refreshTotals = () => {
+    let subtotal = 0;
+    for (const row of linesBody.querySelectorAll('[data-order-line]')) {
+      const option = chosenOption(row);
+      const quantity = positiveQuantity(row);
+      if (option && quantity) subtotal += Number(option.dataset.price ?? 0) * quantity;
+    }
+    const typed = Number(String(discountInput?.value ?? '').replace(',', '.'));
+    const percent = Number.isFinite(typed) ? Math.min(Math.max(typed, 0), 100) : 0;
+    const total = Math.round(subtotal * (10000 - Math.round(percent * 100)) / 10000);
+    if (subtotalOutput) subtotalOutput.textContent = money(subtotal);
+    if (totalOutput) totalOutput.textContent = money(total);
+  };
+
+  orderForm.addEventListener('change', (event) => {
+    const row = event.target.closest('[data-order-line]');
+    if (row) { refreshRow(row); refreshTotals(); }
+  });
+  orderForm.addEventListener('input', (event) => {
+    const row = event.target.closest('[data-order-line]');
+    if (row) { refreshRow(row); refreshTotals(); }
+    else if (event.target === discountInput) refreshTotals();
+  });
+  linesBody?.addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-order-line-remove]');
+    if (!remove) return;
+    const row = remove.closest('[data-order-line]');
+    const rows = linesBody.querySelectorAll('[data-order-line]');
+    if (rows.length <= 1) {
+      // Never leave the order without a row; clearing it is enough.
+      if (partsOf(row).select) partsOf(row).select.value = '';
+      if (partsOf(row).quantity) partsOf(row).quantity.value = '';
+      refreshRow(row);
+    } else {
+      row.remove();
+    }
+    refreshTotals();
+  });
+  orderForm.querySelector('[data-order-line-add]')?.addEventListener('click', () => {
+    if (!template || !linesBody) return;
+    const row = template.content.firstElementChild.cloneNode(true);
+    linesBody.append(row);
+    refreshRow(row);
+    row.querySelector('[data-order-product]')?.focus();
+  });
+  for (const row of linesBody.querySelectorAll('[data-order-line]')) refreshRow(row);
+  refreshTotals();
+}
+
 // Show the chosen file name inside the media box so the upload reads like Shopify's drop zone.
 for (const input of document.querySelectorAll('.media-box__input')) {
   input.addEventListener('change', () => {

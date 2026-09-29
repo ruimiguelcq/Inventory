@@ -1,6 +1,7 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
 import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
 import { DEFAULT_COUNTRY, MAX_ADDRESS, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_POSTAL_CODE, MAX_TAX_ID, VENEZUELA_STATES, customerLocation, customerName } from './customers.mjs';
+import { MAX_NOTES as MAX_ORDER_NOTES, orderTotals, parseDiscount } from './orders.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
@@ -36,15 +37,20 @@ function productThumb(product) {
 // its accessible name; nested items are indented and carry no icon.
 const SIDEBAR_ICONS = {
   products: 'M3.8 6.4 10 3l6.2 3.4v7.2L10 17l-6.2-3.4z M3.8 6.4 10 9.8l6.2-3.4 M10 9.8V17',
+  orders: 'M6 3.3h8v13.4l-2-1.3-2 1.3-2-1.3-2 1.3z M8 7h4 M8 10h4',
   customers: 'M10 9.6a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4z M4.9 16.6c0-2.6 2.3-4.4 5.1-4.4s5.1 1.8 5.1 4.4',
   users: 'M10 3.3 16 5.4v4.1c0 3.6-2.5 5.7-6 7.1-3.5-1.4-6-3.5-6-7.1V5.4z M7.6 9.9l1.7 1.7 3.2-3.3',
   backups: 'M10 3.3c3.3 0 6 1.1 6 2.5S13.3 8.3 10 8.3 4 7.2 4 5.8 6.7 3.3 10 3.3z M4 5.8v8.4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5.8 M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5',
 };
 
+// The sidebar keeps Productos and Pedidos as collapsible groups; each group header is itself a
+// link to its section and its children sit in an expandable list.
 const SIDEBAR_MAIN = [
-  { key: 'products', href: '/products', label: 'Productos', icon: 'products' },
-  { key: 'inventory', href: '/inventory', label: 'Inventario', child: true },
-  { key: 'purchases', href: '/purchase-orders', label: 'Órdenes de compra', child: true },
+  { key: 'products', href: '/products', label: 'Productos', icon: 'products', children: [
+    { key: 'inventory', href: '/inventory', label: 'Inventario' },
+    { key: 'purchases', href: '/purchase-orders', label: 'Órdenes de compra' },
+  ] },
+  { key: 'orders', href: '/orders', label: 'Pedidos', icon: 'orders', children: [] },
   { key: 'customers', href: '/customers', label: 'Clientes', icon: 'customers' },
 ];
 
@@ -57,9 +63,23 @@ function sidebarIcon(name) {
   return `<span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="${SIDEBAR_ICONS[name]}"/></svg></span>`;
 }
 
-function sidebarLink({ key, href, label, icon = null, child = false }, active) {
+function sidebarLink({ key, href, label, icon = null }, active, { child = false } = {}) {
   const isActive = active === key;
   return `<a class="sidebar-link${child ? ' sidebar-child' : ''}${isActive ? ' is-active' : ''}" href="${href}"${isActive ? ' aria-current="page"' : ''}>${icon ? sidebarIcon(icon) : ''}<span class="sidebar-label">${label}</span></a>`;
+}
+
+// A group renders its header link plus a toggle and an expandable list of children. Without
+// JavaScript the list stays open, so every destination remains reachable.
+function sidebarGroup(entry, active) {
+  const { key, children = [] } = entry;
+  const id = `sidebar-children-${key}`;
+  const childLinks = children.map((child) => sidebarLink(child, active, { child: true })).join('');
+  return `<div class="sidebar-group" data-sidebar-group>
+    <div class="sidebar-row">${sidebarLink(entry, active)}
+      <button type="button" class="sidebar-toggle" data-sidebar-toggle aria-expanded="true" aria-controls="${id}" aria-label="Contraer ${escapeHtml(entry.label)}"><span aria-hidden="true">▾</span></button>
+    </div>
+    <div class="sidebar-children" id="${id}" data-sidebar-children>${childLinks}</div>
+  </div>`;
 }
 
 function page(title, content, { active = 'inventory', username, role, csrfToken, message } = {}) {
@@ -78,7 +98,7 @@ function page(title, content, { active = 'inventory', username, role, csrfToken,
       </div>
     </header>
     <aside class="sidebar"><nav class="sidebar-nav" aria-label="Navegación principal">
-      ${SIDEBAR_MAIN.map((entry) => sidebarLink(entry, active)).join('')}
+      ${SIDEBAR_MAIN.map((entry) => (entry.children ? sidebarGroup(entry, active) : sidebarLink(entry, active))).join('')}
       ${role === 'admin' ? `<div class="sidebar-footer">
       <p class="sidebar-section-title">Configuración</p>
       ${SIDEBAR_ADMIN.map((entry) => sidebarLink(entry, active)).join('')}
@@ -430,6 +450,206 @@ export function purchaseOrderPage({ order, lines = [], products = [], values = {
       ${actions}</div>
     ${detail}`;
   return page(`Compra #${order.id}`, content, { ...session, active: 'purchases' });
+}
+
+function movementSourceLabel(source) {
+  if (source === 'creation') return 'Alta';
+  if (source === 'import') return 'Importación Excel';
+  if (source === 'order') return 'Pedido';
+  return 'Manual';
+}
+
+// Orders and drafts hold money in integer cents; the interface always shows USD with two decimals.
+function formatUsd(cents) {
+  return `$${formatCents(cents ?? 0)}`;
+}
+
+function formatPercent(bps) {
+  return `${(bps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')} %`;
+}
+
+const ORDER_STATUS_LABELS = { active: 'Activo', annulled: 'Anulado', open: 'Abierto', completed: 'Completado' };
+
+function orderStatusLabel(status) {
+  return ORDER_STATUS_LABELS[status] ?? status;
+}
+
+// Only active articles can be part of a new order, listed with their availability.
+function orderProductOptions(products, selectedId = '') {
+  return products
+    .filter((product) => !product.archived)
+    .map((product) => {
+      const note = stockStatus(product) === 'agotado' ? ' · Agotado' : stockStatus(product) === 'stockbajo' ? ' · Stock bajo' : '';
+      const selected = String(product.id) === String(selectedId) ? ' selected' : '';
+      return `<option value="${product.id}" data-price="${product.price_cents ?? 0}" data-available="${product.quantity}"${selected}>${escapeHtml(product.part_number)} — ${escapeHtml(product.description)} · ${product.quantity}${note}</option>`;
+    })
+    .join('');
+}
+
+function orderLineRow(line, products) {
+  const product = products.find((candidate) => String(candidate.id) === String(line.productId));
+  const quantity = line.quantity ?? '';
+  const unitPrice = product ? (product.price_cents ?? 0) : null;
+  const lineTotal = product && /^[1-9]\d*$/.test(String(quantity)) ? unitPrice * Number(quantity) : null;
+  return `<tr data-order-line>
+    <td><select class="order-line__product" name="productId" data-order-product aria-label="Producto de la línea">
+      <option value="">Selecciona un artículo</option>
+      ${orderProductOptions(products, line.productId)}
+    </select></td>
+    <td class="order-line__availability" data-order-available>${product ? product.quantity : '—'}</td>
+    <td><input class="line-quantity" type="number" min="1" step="1" inputmode="numeric" name="quantity" value="${escapeHtml(quantity)}" data-order-quantity aria-label="Cantidad de la línea"></td>
+    <td class="order-line__price" data-order-price>${unitPrice == null ? '—' : escapeHtml(formatUsd(unitPrice))}</td>
+    <td class="order-line__subtotal" data-order-line-total>${lineTotal == null ? '—' : escapeHtml(formatUsd(lineTotal))}</td>
+    <td class="row-action"><button type="button" class="text-link" data-order-line-remove>Quitar</button></td>
+  </tr>`;
+}
+
+// The list keeps the same pattern as the other sections: a clean heading, a Crear pedido button for
+// management, and one row per order. Search, filters and export arrive with the list ticket.
+export function ordersPage({ orders = [], error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const createButton = canManage ? '<a class="button button-primary" href="/orders/new">Crear pedido</a>' : '';
+  const rows = orders.map((order) => `<tr>
+    <td class="part-number"><a href="/orders/${order.number}">#${order.number}</a></td>
+    <td><time datetime="${escapeHtml(timestampAttribute(order.created_at))}">${escapeHtml(formatTimestamp(order.created_at))}</time></td>
+    <td class="align-left">${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</td>
+    <td>${escapeHtml(order.channel_name)}</td>
+    <td>${escapeHtml(formatPercent(order.discount_bps))}</td>
+    <td class="quantity-cell">${escapeHtml(formatUsd(order.total_cents))}</td>
+    <td><span class="status-tag">${escapeHtml(orderStatusLabel(order.status))}</span></td>
+  </tr>`).join('');
+
+  const content = `
+    <div class="page-heading">
+      <div><h1>Pedidos</h1>
+        <p class="page-subtitle">Cada pedido descuenta inventario al crearse y queda registrado en el historial de cada artículo.</p></div>
+      <div class="form-actions">${createButton}</div>
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <section class="inventory-panel" aria-label="Lista de pedidos">
+      ${orders.length ? `<div class="table-scroll"><table><thead><tr>
+        <th scope="col">Pedido</th><th scope="col">Fecha (UTC)</th><th scope="col" class="align-left">Cliente</th>
+        <th scope="col">Canal</th><th scope="col">Descuento</th><th scope="col" class="align-right">Total</th><th scope="col">Estado</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty-state">
+        <span class="empty-icon" aria-hidden="true">⌁</span>
+        <h3>Todavía no hay pedidos</h3>
+        <p>${canManage ? 'Crea un pedido: elige cliente, canal y artículos; el inventario se descuenta al guardar.' : 'Cuando Gestión cree un pedido, aparecerá aquí.'}</p>
+      </div>`}
+    </section>`;
+  return page('Pedidos', content, { ...session, active: 'orders' });
+}
+
+// Alta de pedido: cliente registrado, canal de la lista editable, líneas del catálogo con cantidad,
+// precio unitario automático (solo lectura), descuento en % y notas.
+export function orderFormPage({ customers = [], channels = [], products = [], values = {}, error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const customerOptions = customers.map((customer) => ({ id: customer.id, name: customerName(customer) }));
+  const lineValues = values.lines?.length ? values.lines : [{ productId: '', quantity: '' }, { productId: '', quantity: '' }, { productId: '', quantity: '' }];
+  const rows = lineValues.map((line) => orderLineRow(line, products)).join('');
+  const selectedLines = lineValues
+    .map((line) => {
+      const product = products.find((candidate) => String(candidate.id) === String(line.productId));
+      const quantity = Number(line.quantity);
+      return product && Number.isSafeInteger(quantity) ? { quantity, unitPriceCents: product.price_cents ?? 0 } : null;
+    })
+    .filter(Boolean);
+  const discount = parseDiscount(values.discount);
+  const totals = orderTotals(selectedLines, discount.bps ?? 0);
+  const noCustomers = customers.length === 0;
+  const content = `
+    <div class="breadcrumb"><a href="/orders">Pedidos</a><span aria-hidden="true">/</span><span>Nuevo pedido</span></div>
+    <div class="page-heading form-heading"><div><p class="eyebrow">Alta de pedido</p><h1>Nuevo pedido</h1>
+      <p class="page-subtitle">Al guardar, el inventario de cada artículo se descuenta y queda el movimiento en su historial.</p></div></div>
+    <form class="product-form" method="post" action="/orders" data-order-form>
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      <section class="form-section form-card">
+        <h2>Cliente y canal</h2>
+        ${noCustomers ? `<p class="form-hint">Todavía no hay clientes registrados. Crea uno para poder registrar el pedido.
+          ${canManage ? '<a href="/customers/new">Agregar cliente</a>.' : ''}</p>` : ''}
+        ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+        ${namedListCombo({ field: 'channelId', newField: 'newChannel', newLabel: 'Crear canal', placeholder: 'Elige un canal', searchPlaceholder: 'Buscar o agregar canal', options: channels, selectedId: values.channelId, canCreate: true, newValue: values.newChannel ?? '' })}
+      </section>
+      <section class="form-section form-card">
+        <h2>Líneas del pedido</h2>
+        <p class="form-hint">Elige artículos del catálogo y fija su cantidad. El precio unitario viene del producto y no se edita. No se puede pedir más que el disponible.</p>
+        <div class="table-scroll"><table class="order-lines"><thead><tr>
+          <th scope="col">Producto</th><th scope="col" class="align-right">Disponible</th>
+          <th scope="col" class="align-right">Cantidad</th><th scope="col" class="align-right">Precio unitario</th>
+          <th scope="col" class="align-right">Importe</th><th scope="col"><span class="visually-hidden">Acciones</span></th>
+        </tr></thead><tbody data-order-lines>${rows}</tbody></table></div>
+        <template data-order-line-template>${orderLineRow({ productId: '', quantity: '' }, products)}</template>
+        <div class="form-actions"><button class="button button-secondary" type="button" data-order-line-add>Añadir artículo</button></div>
+      </section>
+      <div class="product-layout">
+        <div class="product-layout__main">
+          <section class="form-section form-card">
+            <h2>Descuento y total</h2>
+            <div class="order-totals">
+              <div><span>Subtotal</span><output data-order-subtotal>${escapeHtml(formatUsd(totals.subtotalCents))}</output></div>
+              <div><label for="discount">Descuento</label>
+                <span class="order-discount"><input id="discount" name="discount" inputmode="decimal" value="${escapeHtml(values.discount ?? '')}" data-order-discount aria-label="Descuento en porcentaje"> <span aria-hidden="true">%</span></span></div>
+              <div class="order-total"><span>Total</span><output data-order-total>${escapeHtml(formatUsd(totals.totalCents))}</output></div>
+            </div>
+          </section>
+          <div class="form-actions">
+            <a class="button button-secondary" href="/orders">Cancelar</a>
+            <button class="button button-primary" type="submit">Crear pedido</button>
+          </div>
+        </div>
+        <aside class="product-layout__side">
+          <section class="form-section form-card">
+            <h2>Notas</h2>
+            <p class="form-hint">Las notas son privadas y no se comparten con el cliente.</p>
+            <div class="field"><label class="visually-hidden" for="notes">Notas</label>
+              <textarea id="notes" name="notes" rows="5" maxlength="${MAX_ORDER_NOTES}" placeholder="Notas internas">${escapeHtml(values.notes ?? '')}</textarea></div>
+          </section>
+        </aside>
+      </div>
+    </form>`;
+  return page('Nuevo pedido', content, { ...session, active: 'orders' });
+}
+
+export function orderDetailPage({ order, lines = [], ...session }) {
+  const subtotalCents = lines.reduce((sum, line) => sum + line.quantity * line.unit_price_cents, 0);
+  const totalCents = order.total_cents;
+  const rows = lines.map((line) => {
+    const lineTotal = line.quantity * line.unit_price_cents;
+    return `<tr>
+      <td class="part-number">${escapeHtml(line.part_number)}</td>
+      <td class="align-left">${escapeHtml(line.description)}${line.archived ? ' <span class="status-tag">Archivado</span>' : ''}</td>
+      <td>${escapeHtml(presentationLabel(line.presentation))}</td>
+      <td class="quantity-cell">${line.quantity}</td>
+      <td class="quantity-cell">${escapeHtml(formatUsd(line.unit_price_cents))}</td>
+      <td class="quantity-cell">${escapeHtml(formatUsd(lineTotal))}</td>
+    </tr>`;
+  }).join('');
+  const source = order.source_draft_number ? `<dt>Origen</dt><dd>Desde borrador #D${order.source_draft_number}</dd>` : '';
+  const content = `
+    <div class="breadcrumb"><a href="/orders">Pedidos</a><span aria-hidden="true">/</span><span>Pedido #${order.number}</span></div>
+    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(orderStatusLabel(order.status))}</p><h1>Pedido #${order.number}</h1>
+      <p class="page-subtitle">Creado el ${escapeHtml(formatTimestamp(order.created_at))} · ${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</p></div></div>
+    <section class="product-form form-section">
+      <dl class="product-details">
+        <dt>Cliente</dt><dd>${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</dd>
+        <dt>Canal</dt><dd>${escapeHtml(order.channel_name)}</dd>
+        <dt>Fecha</dt><dd>${escapeHtml(formatTimestamp(order.created_at))}</dd>
+        <dt>Estado</dt><dd>${escapeHtml(orderStatusLabel(order.status))}</dd>
+        ${source}
+        <dt>Descuento</dt><dd>${escapeHtml(formatPercent(order.discount_bps))}</dd>
+        <dt>Subtotal</dt><dd>${escapeHtml(formatUsd(subtotalCents))}</dd>
+        <dt>Total</dt><dd>${escapeHtml(formatUsd(totalCents))}</dd>
+        <dt>Notas</dt><dd class="long-description">${order.notes ? escapeHtml(order.notes) : '—'}</dd>
+      </dl>
+    </section>
+    <section class="inventory-panel" aria-label="Artículos del pedido">
+      <h2>Artículos</h2>
+      ${lines.length ? `<div class="table-scroll"><table><thead><tr>
+        <th scope="col">P/N</th><th scope="col" class="align-left">Producto</th><th scope="col">Presentación</th>
+        <th scope="col" class="align-right">Cantidad</th><th scope="col" class="align-right">Precio unitario</th><th scope="col" class="align-right">Importe</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty-state"><p>Este pedido no tiene artículos.</p></div>'}
+    </section>`;
+  return page(`Pedido #${order.number}`, content, { ...session, active: 'orders' });
 }
 
 export function productDetailPage({ product, ...session }) {
@@ -983,7 +1203,7 @@ export function historyPage({ product, movements, ...session }) {
         <td>${escapeHtml(movement.username)}</td><td>${movement.operation === 'adjust' ? 'Ajustar por' : 'Establecer en'}</td>
         <td>${movement.quantity}</td><td>${movement.previous_quantity}</td><td>${movement.new_quantity}</td>
          <td>${escapeHtml(presentationLabel(movement.presentation))}</td><td>${escapeHtml(movement.reason || '—')}</td>
-         <td>${movement.source === 'creation' ? 'Alta' : movement.source === 'import' ? 'Importación Excel' : 'Manual'}</td>
+         <td>${movementSourceLabel(movement.source)}</td>
       </tr>`).join('')}</tbody></table></div>` : '<div class="empty-state"><p>Todavía no hay movimientos.</p></div>'}
     </section>`, session);
 }
