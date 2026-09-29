@@ -8,10 +8,10 @@ Estado: Aceptado
 
 El ticket #1 difirió la estrategia concreta de copias de seguridad al momento de
 la implementación, con el requisito de no perder datos. La aplicación guarda
-todo su estado (cuentas, artículos, inventario e historial, incluidas las
-imágenes de los productos) en una única base de datos SQLite,
-`data/inventory.sqlite`, más los archivos de imagen servidos por la aplicación,
-desde un solo ordenador.
+todo su estado (cuentas, artículos, inventario e historial, listas de compra y
+clientes con sus correos, teléfonos y direcciones, incluidas las imágenes de los
+productos) en una única base de datos SQLite, `data/inventory.sqlite`, más los
+archivos de imagen servidos por la aplicación, desde un solo ordenador.
 
 ## Decisión
 
@@ -44,8 +44,8 @@ desde un solo ordenador.
   viva y se intercambia el archivo. La restauración se confirma con CSRF y un
   token de confirmación.
 - Verificar la restauración comparando la integridad y los recuentos de
-  artículos, movimientos, cuentas, categorías, listas de compra e imágenes con
-  la copia de origen.
+  artículos, movimientos, cuentas, categorías, listas de compra, clientes (con
+  sus correos, teléfonos y direcciones) e imágenes con la copia de origen.
 - Si algo falla después del intercambio, recuperar automáticamente la copia de
   seguridad del estado anterior y reabrir la base de datos, de modo que la
   operación nunca deja el inventario a medias.
@@ -59,8 +59,14 @@ La restauración está reservada a la cuenta administradora.
 - Las imágenes de los productos viajan con las copias y con la restauración:
   restaurar repone las imágenes que existían en ese momento y descarta las
   posteriores; la copia previa conserva las imágenes del estado anterior.
+- Los clientes y sus correos, teléfonos y direcciones viajan con las copias y la
+  restauración. Una copia anterior a la v1.3 sigue siendo restaurable: la
+  migración añade las tablas de clientes vacías y no toca el resto del estado.
 - Las sesiones en memoria siguen siendo válidas mientras su usuario exista en
   los datos restaurados; si no existe, la sesión caduca de forma natural.
 - La verificación por recuentos detecta copias corruptas o truncadas, aunque no
   detecta cambios de contenido con el mismo número de filas. Para eso está
   `PRAGMA integrity_check` sobre el archivo restaurado.
+- Un recuento de cero es válido tanto para una copia anterior a una función como
+  para una copia que perdió esas filas: la tabla ausente y la tabla vacía se
+  cuentan igual. La migración al restaurar vuelve a crear las tablas que falten.

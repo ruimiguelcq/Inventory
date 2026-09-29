@@ -69,13 +69,19 @@ function inspectCounts(database) {
     (SELECT COUNT(*) FROM products) AS products,
     (SELECT COUNT(*) FROM stock_movements) AS movements,
     (SELECT COUNT(*) FROM users) AS users`).get();
-  // Snapshots from before categories and purchases remain valid restore points; migration adds
-  // empty tables and the starter categories.
+  // Snapshots from before categories, purchases and customers remain valid restore points;
+  // migration adds empty tables and the starter categories.
   return {
     ...counts,
     categories: categoryCount(database),
     purchaseOrders: tableCount(database, 'purchase_orders'),
     purchaseOrderLines: tableCount(database, 'purchase_order_lines'),
+    // Customers and their associated contacts and address travel together, so a snapshot is
+    // measured by all four tables.
+    customers: tableCount(database, 'customers'),
+    customerEmails: tableCount(database, 'customer_emails'),
+    customerPhones: tableCount(database, 'customer_phones'),
+    customerAddresses: tableCount(database, 'customer_addresses'),
   };
 }
 
@@ -106,7 +112,7 @@ export function inspectBackup(path) {
     const missingImages = missingImageCount(database, imagesPath);
     return { ...info, valid: integrity === 'ok' && missingImages === 0, integrity, ...counts, images: countImages(imagesPath), missingImages };
   } catch {
-    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null, images: 0, missingImages: null };
+    return { ...info, valid: false, integrity: 'error', products: null, movements: null, users: null, images: 0, missingImages: null, customers: null, customerEmails: null, customerPhones: null, customerAddresses: null };
   } finally {
     database?.close();
   }

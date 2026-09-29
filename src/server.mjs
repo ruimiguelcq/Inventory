@@ -602,6 +602,8 @@ export function createInventoryServer({
               if (summary.integrity !== 'ok' || summary.products !== backup.products
                 || summary.movements !== backup.movements || summary.users !== backup.users || summary.categories !== backup.categories
                 || summary.purchaseOrders !== backup.purchaseOrders || summary.purchaseOrderLines !== backup.purchaseOrderLines
+                || summary.customers !== backup.customers || summary.customerEmails !== backup.customerEmails
+                || summary.customerPhones !== backup.customerPhones || summary.customerAddresses !== backup.customerAddresses
                 || summary.images !== backup.images) {
                 throw new BackupError('La restauración no coincide con la copia verificada.', 500);
               }
