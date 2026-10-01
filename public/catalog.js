@@ -165,16 +165,25 @@ for (const combo of document.querySelectorAll('[data-combo]')) {
   });
 }
 
-// Collapsible sidebar groups. Without JavaScript the list stays open, so nothing is hidden.
+// Collapsible sidebar groups. Only one group stays open: opening one folds the rest. The server
+// renders every group collapsed except the active one, so nothing needs to happen on load.
+const sidebarGroups = [...document.querySelectorAll('[data-sidebar-group]')];
+function setSidebarExpanded(group, expanded) {
+  const toggle = group.querySelector('[data-sidebar-toggle]');
+  const children = group.querySelector('[data-sidebar-children]');
+  if (!toggle || !children) return;
+  const label = group.querySelector('.sidebar-label')?.textContent ?? '';
+  toggle.setAttribute('aria-expanded', String(expanded));
+  toggle.setAttribute('aria-label', `${expanded ? 'Contraer' : 'Desplegar'} ${label}`.trim());
+  children.hidden = !expanded;
+}
 for (const toggle of document.querySelectorAll('[data-sidebar-toggle]')) {
-  const children = toggle.closest('[data-sidebar-group]')?.querySelector('[data-sidebar-children]');
-  if (!children) continue;
+  const group = toggle.closest('[data-sidebar-group]');
+  if (!group) continue;
   toggle.addEventListener('click', () => {
-    const expanded = toggle.getAttribute('aria-expanded') !== 'false';
-    toggle.setAttribute('aria-expanded', String(!expanded));
-    children.hidden = expanded;
-    const glyph = toggle.querySelector('span');
-    if (glyph) glyph.textContent = expanded ? '▸' : '▾';
+    const willExpand = toggle.getAttribute('aria-expanded') !== 'true';
+    for (const other of sidebarGroups) if (other !== group) setSidebarExpanded(other, false);
+    setSidebarExpanded(group, willExpand);
   });
 }
 

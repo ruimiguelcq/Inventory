@@ -108,3 +108,26 @@ test('Consulta ve Clientes pero no la administración', async (t) => {
   assert.deepEqual(hrefs, ['/products', '/inventory', '/purchase-orders', '/orders', '/drafts', '/customers']);
   assert.doesNotMatch(sidebar, /Configuración|Cuentas y permisos|Copias de seguridad/);
 });
+
+const childrenOf = (sidebar, key) => sidebar.match(new RegExp(`<div class="sidebar-children" id="sidebar-children-${key}"[^>]*>`))?.[0] ?? '';
+
+test('solo el grupo de la vista activa nace desplegado y el resto plegado', async (t) => {
+  const a = await app(t);
+
+  // En Productos, su grupo (y sus hijos) queda desplegado; Pedidos parte plegado.
+  const products = sidebarOf(await (await a.get('/products')).text());
+  assert.doesNotMatch(childrenOf(products, 'products'), /hidden/);
+  assert.match(childrenOf(products, 'orders'), /hidden/);
+  assert.match(products, /aria-expanded="true" aria-controls="sidebar-children-products"/);
+  assert.match(products, /aria-expanded="false" aria-controls="sidebar-children-orders"/);
+
+  // En Pedidos se invierte.
+  const orders = sidebarOf(await (await a.get('/orders')).text());
+  assert.match(childrenOf(orders, 'products'), /hidden/);
+  assert.doesNotMatch(childrenOf(orders, 'orders'), /hidden/);
+
+  // Estando en un hijo (Borradores), su grupo padre Pedidos queda desplegado.
+  const drafts = sidebarOf(await (await a.get('/drafts')).text());
+  assert.doesNotMatch(childrenOf(drafts, 'orders'), /hidden/);
+  assert.match(childrenOf(drafts, 'products'), /hidden/);
+});

@@ -70,17 +70,18 @@ function sidebarLink({ key, href, label, icon = null }, active, { child = false 
   return `<a class="sidebar-link${child ? ' sidebar-child' : ''}${isActive ? ' is-active' : ''}" href="${href}"${isActive ? ' aria-current="page"' : ''}>${icon ? sidebarIcon(icon) : ''}<span class="sidebar-label">${label}</span></a>`;
 }
 
-// A group renders its header link plus a toggle and an expandable list of children. Without
-// JavaScript the list stays open, so every destination remains reachable.
+// A group renders its header link plus a toggle and an expandable list of children. Every group is
+// collapsed on load except the one holding the active view; the client keeps only one open at a time.
 function sidebarGroup(entry, active) {
   const { key, children = [] } = entry;
   const id = `sidebar-children-${key}`;
+  const expanded = active === key || children.some((child) => child.key === active);
   const childLinks = children.map((child) => sidebarLink(child, active, { child: true })).join('');
   return `<div class="sidebar-group" data-sidebar-group>
     <div class="sidebar-row">${sidebarLink(entry, active)}
-      <button type="button" class="sidebar-toggle" data-sidebar-toggle aria-expanded="true" aria-controls="${id}" aria-label="Contraer ${escapeHtml(entry.label)}"><span aria-hidden="true">▾</span></button>
+      <button type="button" class="sidebar-toggle" data-sidebar-toggle aria-expanded="${expanded}" aria-controls="${id}" aria-label="${expanded ? 'Contraer' : 'Desplegar'} ${escapeHtml(entry.label)}"></button>
     </div>
-    <div class="sidebar-children" id="${id}" data-sidebar-children>${childLinks}</div>
+    <div class="sidebar-children" id="${id}" data-sidebar-children${expanded ? '' : ' hidden'}>${childLinks}</div>
   </div>`;
 }
 
