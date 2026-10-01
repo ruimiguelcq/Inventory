@@ -716,7 +716,10 @@ export function orderFormPage({ customers = [], channels = [], products = [], va
         <h2>Cliente y canal</h2>
         ${noCustomers ? `<p class="form-hint">Todavía no hay clientes registrados. Crea uno para poder registrar el pedido.
           ${canManage ? '<a href="/customers/new">Agregar cliente</a>.' : ''}</p>` : ''}
-        ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+        <div class="field-row">
+          ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+          ${canManage ? '<button type="button" class="button button-secondary customer-inline-trigger" data-customer-open>Nuevo cliente</button>' : ''}
+        </div>
         ${namedListCombo({ field: 'channelId', newField: 'newChannel', newLabel: 'Crear canal', placeholder: 'Elige un canal', searchPlaceholder: 'Buscar o agregar canal', options: channels, selectedId: values.channelId, canCreate: true, newValue: values.newChannel ?? '' })}
       </section>
       <section class="form-section form-card">
@@ -755,7 +758,8 @@ export function orderFormPage({ customers = [], channels = [], products = [], va
           </section>
         </aside>
       </div>
-    </form>`;
+    </form>
+    ${canManage ? inlineCustomerDialog() : ''}`;
   return page('Nuevo pedido', content, { ...session, active: 'orders' });
 }
 
@@ -972,7 +976,10 @@ export function draftFormPage({ draft = null, customers = [], channels = [], pro
         <h2>Cliente y canal</h2>
         ${noCustomers ? `<p class="form-hint">Todavía no hay clientes registrados. Crea uno para poder cotizar.
           ${canManage ? '<a href="/customers/new">Agregar cliente</a>.' : ''}</p>` : ''}
-        ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+        <div class="field-row">
+          ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+          ${canManage ? '<button type="button" class="button button-secondary customer-inline-trigger" data-customer-open>Nuevo cliente</button>' : ''}
+        </div>
         ${namedListCombo({ field: 'channelId', newField: 'newChannel', newLabel: 'Crear canal', placeholder: 'Elige un canal', searchPlaceholder: 'Buscar o agregar canal', options: channels, selectedId: values.channelId, canCreate: true, newValue: values.newChannel ?? '' })}
       </section>
       <section class="form-section form-card">
@@ -1011,7 +1018,8 @@ export function draftFormPage({ draft = null, customers = [], channels = [], pro
           </section>
         </aside>
       </div>
-    </form>`;
+    </form>
+    ${canManage ? inlineCustomerDialog() : ''}`;
   return page(heading, content, { ...session, active: 'drafts' });
 }
 
@@ -1183,7 +1191,7 @@ export function forbiddenPage(session) {
 function namedListCombo({ field, newField, newLabel, placeholder, searchPlaceholder, options, selectedId, canCreate, newValue = '' }) {
   const selected = String(selectedId ?? '');
   const optionMarkup = options.map((option) => `<option value="${option.id}" ${String(option.id) === selected ? 'selected' : ''}>${escapeHtml(option.name)}</option>`).join('');
-  return `<div class="combo" data-combo>
+  return `<div class="combo" data-combo${field === 'customerId' ? ' data-combo-customer' : ''}>
     <select id="${field}" name="${field}" class="combo__native" data-combo-native>
       <option value="">${escapeHtml(placeholder)}</option>
       ${optionMarkup}
@@ -1499,6 +1507,57 @@ function addressFields(address) {
           ${VENEZUELA_STATES.map((name) => `<option value="${escapeHtml(name)}"${name === state ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
         </select></div>
     </div>`;
+}
+
+// "Cliente al vuelo": a reusable modal that posts to /customers/inline and adds the new customer to
+// the customer combo in place, without leaving the order or draft being written. It hides itself
+// unless the browser runs scripts, and can be closed by clicking the backdrop or pressing Escape.
+function inlineCustomerDialog() {
+  const required = '<span class="required-mark">Obligatorio</span>';
+  const optional = '<span class="optional-mark">Opcional</span>';
+  return `<dialog class="customer-dialog" data-customer-dialog aria-label="Nuevo cliente">
+    <form class="product-form" method="post" action="/customers/inline" data-customer-inline>
+      <header class="customer-dialog__head">
+        <div><p class="eyebrow">Cliente al vuelo</p><h2>Nuevo cliente</h2>
+          <p class="form-hint">El cliente queda en Clientes y se asigna al pedido al guardarlo. El RIF / Cédula es único.</p></div>
+        <button type="button" class="customer-dialog__close" data-customer-close aria-label="Cerrar">×</button>
+      </header>
+      <p class="form-error" role="alert" data-customer-error hidden></p>
+      <div class="customer-dialog__grid">
+        <div class="field"><label for="inline-name">Nombre ${required}</label>
+          <input id="inline-name" name="name" maxlength="${MAX_NAME}" required></div>
+        <div class="field"><label for="inline-lastName">Apellido ${optional}</label>
+          <input id="inline-lastName" name="lastName" maxlength="${MAX_NAME}"></div>
+        <div class="field"><label for="inline-taxId">RIF / Cédula ${required}</label>
+          <input id="inline-taxId" name="taxId" maxlength="${MAX_TAX_ID}" placeholder="V-12345678-9" required></div>
+        <div class="field"><label for="inline-email">Correo electrónico ${required}</label>
+          <input id="inline-email" name="email" type="email" maxlength="${MAX_EMAIL}" required></div>
+        <div class="field"><label for="inline-phone">Número de teléfono ${required}</label>
+          <input id="inline-phone" name="phone" maxlength="${MAX_PHONE}" placeholder="+58 412 000 0000" required></div>
+      </div>
+      <details class="price-extra">
+        <summary>Dirección y notas</summary>
+        <p class="form-hint">La dirección es opcional. El estado debe ser de Venezuela.</p>
+        <div class="form-grid">
+          <div class="field field-wide"><label for="inline-address1">Calle y número de casa</label>
+            <input id="inline-address1" name="address1" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field"><label for="inline-addressCity">Ciudad</label>
+            <input id="inline-addressCity" name="addressCity" maxlength="${MAX_ADDRESS}"></div>
+          <div class="field"><label for="inline-addressState">Estado</label>
+            <select id="inline-addressState" name="addressState">
+              <option value="">Selecciona un estado</option>
+              ${VENEZUELA_STATES.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+            </select></div>
+        </div>
+        <div class="field"><label for="inline-notes">Notas</label>
+          <textarea id="inline-notes" name="notes" rows="3" maxlength="${MAX_NOTES}" placeholder="Notas internas"></textarea></div>
+      </details>
+      <div class="form-actions">
+        <button type="button" class="button button-quiet" data-customer-close>Cancelar</button>
+        <button type="button" class="button button-primary" data-customer-submit>Guardar y usar</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 // The principal email and phone are required; extra contacts live behind "Datos adicionales".

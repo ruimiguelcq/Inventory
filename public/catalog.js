@@ -268,6 +268,65 @@ if (orderForm) {
   refreshTotals();
 }
 
+// Cliente al vuelo: the dialog posts to /customers/inline and, on success, adds the new customer to
+// the combo, selects it and closes. A duplicate RIF/Cédula or a validation error shows inside the
+// dialog, keeping everything already written in the order or draft untouched.
+const customerDialog = document.querySelector('[data-customer-dialog]');
+const customerOpen = document.querySelector('[data-customer-open]');
+if (customerDialog && customerOpen) {
+  const inlineForm = customerDialog.querySelector('[data-customer-inline]');
+  const errorBox = customerDialog.querySelector('[data-customer-error]');
+  const showError = (message) => {
+    if (!errorBox) return;
+    errorBox.textContent = message;
+    errorBox.hidden = false;
+  };
+  customerOpen.addEventListener('click', () => {
+    if (errorBox) errorBox.hidden = true;
+    customerDialog.showModal();
+  });
+  for (const close of customerDialog.querySelectorAll('[data-customer-close]')) {
+    close.addEventListener('click', () => customerDialog.close());
+  }
+  // Clicking the backdrop (outside the panel) closes the dialog.
+  customerDialog.addEventListener('click', (event) => {
+    if (event.target === customerDialog) customerDialog.close();
+  });
+  customerDialog.querySelector('[data-customer-submit]')?.addEventListener('click', async () => {
+    if (errorBox) errorBox.hidden = true;
+    const combo = document.querySelector('[data-combo][data-combo-customer]');
+    const native = combo?.querySelector('[data-combo-native]');
+    const csrfToken = customerDialog.closest('main')?.querySelector('input[name="csrfToken"]')?.value
+      ?? document.querySelector('input[name="csrfToken"]')?.value ?? '';
+    const body = new URLSearchParams(new FormData(inlineForm));
+    body.set('csrfToken', csrfToken);
+    let data;
+    try {
+      const response = await fetch('/customers/inline', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      data = await response.json();
+      if (!response.ok) return showError(data.error ?? 'No se pudo guardar el cliente.');
+    } catch {
+      return showError('No se pudo guardar el cliente. Inténtalo de nuevo.');
+    }
+    if (native) {
+      const option = document.createElement('option');
+      option.value = data.id;
+      option.textContent = data.name;
+      option.selected = true;
+      native.append(option);
+      native.dispatchEvent(new Event('change', { bubbles: true }));
+      const toggle = combo.querySelector('[data-combo-label]');
+      if (toggle) toggle.textContent = data.name;
+    }
+    customerDialog.close();
+    inlineForm.reset();
+  });
+}
+
 // Show the chosen file name inside the media box so the upload reads like Shopify's drop zone.
 for (const input of document.querySelectorAll('.media-box__input')) {
   input.addEventListener('change', () => {

@@ -644,6 +644,21 @@ button.text-link:hover { text-decoration: underline; text-underline-offset: 3px;
 .media-box__input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .combo { position: relative; display: flex; flex-direction: column; gap: 13px; }
 .combo + .combo, .combo + .field, .field + .combo { margin-top: 15px; }
+/* The customer combo sits beside a "Nuevo cliente" button that opens the inline dialog. */
+.field-row { display: flex; align-items: flex-start; gap: 12px; }
+.field-row .combo { flex: 1; min-width: 0; }
+.field-row .customer-inline-trigger { margin-top: 0; white-space: nowrap; }
+.customer-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 48px rgb(21 47 62 / 22%); }
+.customer-dialog::backdrop { background: rgb(21 47 62 / 40%); }
+.customer-dialog .product-form { padding: 24px; }
+.customer-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.customer-dialog__head h2 { margin: 2px 0 4px; font-size: 20px; }
+.customer-dialog__head .form-hint { margin: 0; }
+.customer-dialog__close { border: 0; background: none; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.customer-dialog__close:hover { color: var(--ink); }
+.customer-dialog__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.customer-dialog__grid .field-wide { grid-column: 1 / -1; }
+@media (max-width: 560px) { .customer-dialog__grid { grid-template-columns: 1fr; } }
 .combo[data-combo-ready="true"] .combo__native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .combo[data-combo-ready="true"] .combo__create { display: none; }
 .combo__widget { position: relative; }

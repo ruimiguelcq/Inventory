@@ -37,7 +37,7 @@ import {
 } from './database.mjs';
 import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, draftDetailPage, draftFormPage, draftsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
 import { addOrderComment, annulOrder, archiveOrder, convertDraftToOrder, createDraftFromForm, createOrderFromForm, deleteDraft, filterDrafts, filterOrders, markOrderPaid, markOrderPrepared, OrderError, orderFormValues, orderState, paginateOrders, setDraftStatus, unarchiveOrder, updateDraftFromForm } from './orders.mjs';
-import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
+import { addressFromForm, createCustomerInline, CustomerError, customerName as customerDisplayName, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
@@ -129,6 +129,16 @@ function sendHtml(response, html, status = 200, headers = {}) {
 function redirect(response, location, headers = {}) {
   response.writeHead(303, { location, 'cache-control': 'no-store', ...headers });
   response.end();
+}
+
+// The inline customer dialog posts with fetch and expects JSON back, not an HTML page.
+function sendJson(response, data, status = 200) {
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  response.end(JSON.stringify(data));
 }
 
 function productFrom(form, previous = {}) {
@@ -1027,6 +1037,23 @@ export function createInventoryServer({
           const messages = { saved: 'Borrador guardado.', complete: 'Borrador completado.', reopen: 'Borrador reabierto.' };
           const message = Object.entries(messages).find(([flag]) => url.searchParams.get(flag) === '1')?.[1] ?? '';
           return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), message }));
+        }
+      }
+
+      // "Cliente al vuelo": the order and draft forms add a customer without leaving the page. It is
+      // a fetch-only endpoint that answers JSON so the dialog can select the new customer in place.
+      if (request.method === 'POST' && url.pathname === '/customers/inline') {
+        const form = await readForm(request);
+        if (!validateCsrf(form, session)) return sendJson(response, { error: 'La sesión caducó. Vuelve a intentarlo.' }, 403);
+        const user = findUser(database, session.userId);
+        if (!canManageInventory(user?.role)) return sendJson(response, { error: 'No tienes permiso para crear clientes.' }, 403);
+        try {
+          const id = createCustomerInline(database, session.userId, form);
+          const row = findCustomer(database, id);
+          return sendJson(response, { id, name: customerDisplayName(row) }, 201);
+        } catch (error) {
+          if (error instanceof CustomerError) return sendJson(response, { error: error.message }, error.status);
+          throw error;
         }
       }
 
