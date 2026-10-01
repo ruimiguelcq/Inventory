@@ -221,6 +221,7 @@ export function openDatabase(databasePath) {
       notes TEXT,
       total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
       source_draft_number INTEGER,
+      source_draft_id INTEGER,
       paid_at TEXT,
       fulfilled_at TEXT,
       archived_at TEXT,
@@ -257,7 +258,7 @@ export function openDatabase(databasePath) {
   // Payment, fulfilment and archival are timestamps rather than a second status column, so the
   // order lifecycle (open/archived/annulled) stays independent from the operational states.
   const orderColumns = () => database.prepare('PRAGMA table_info(orders)').all().map((column) => column.name);
-  for (const [name, definition] of [['paid_at', 'TEXT'], ['fulfilled_at', 'TEXT'], ['archived_at', 'TEXT']]) {
+  for (const [name, definition] of [['paid_at', 'TEXT'], ['fulfilled_at', 'TEXT'], ['archived_at', 'TEXT'], ['source_draft_id', 'INTEGER']]) {
     if (!orderColumns().includes(name)) database.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
   }
   const seedChannel = database.prepare('INSERT INTO channels (name) VALUES (?) ON CONFLICT(name) DO NOTHING');
@@ -577,10 +578,10 @@ export function takeOrderNumber(database, kind) {
 
 export function insertOrder(database, order) {
   return database.prepare(`
-    INSERT INTO orders (kind, number, status, customer_id, channel_id, discount_bps, notes, total_cents, source_draft_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (kind, number, status, customer_id, channel_id, discount_bps, notes, total_cents, source_draft_number, source_draft_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(order.kind, order.number, order.status, order.customerId, order.channelId, order.discountBps,
-    order.notes, order.totalCents, order.sourceDraftNumber ?? null);
+    order.notes, order.totalCents, order.sourceDraftNumber ?? null, order.sourceDraftId ?? null);
 }
 
 export function insertOrderLine(database, orderId, line, position) {

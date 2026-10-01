@@ -72,6 +72,7 @@ const draftFields = (a, overrides = {}) => ({
   productId: ['1'], quantity: ['2'], ...overrides,
 });
 const createDraft = (a, overrides = {}) => a.post('/drafts', draftFields(a, overrides));
+const convert = (a, number) => a.post(`/drafts/${number}/convert`, { csrfToken: a.csrfToken });
 const inventory = async (a, id) => (await (await a.get(`/products/${id}`)).text()).match(/Inventario<\/dt><dd>(\d+)/)?.[1];
 const draftLinks = (html) => [...html.matchAll(/class="part-number"><a href="\/drafts\/(\d+)"/g)].map((match) => match[1]);
 const headerCells = (html) => [...html.match(/<thead>([\s\S]*?)<\/thead>/)[1]
@@ -225,6 +226,69 @@ test('valida cliente, líneas y cantidades y exige CSRF', async (t) => {
   }
   assert.doesNotMatch(await (await a.get('/drafts')).text(), /#D\d/);
   assert.equal((await a.post('/drafts', { customerId: '1', channelId: '1', productId: ['1'], quantity: ['1'] })).status, 403);
+});
+
+test('convertir crea el pedido, descuenta inventario y completa el borrador', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  // The draft quotes 2 JUNTA and 1 ANODO ($22.50) but touches no stock.
+  assert.equal((await createDraft(a, { productId: ['1', '2'], quantity: ['2', '1'], discount: '0' })).status, 303);
+  assert.equal(await inventory(a, 1), '5');
+  assert.equal(await inventory(a, 2), '3');
+
+  const converted = await convert(a, 1);
+  assert.equal(converted.status, 303);
+  assert.equal(converted.headers.get('location'), '/orders/1001?converted=1');
+
+  // The order takes the order series and discounts the stock with order movements.
+  const detail = await (await a.get('/orders/1001?converted=1')).text();
+  assert.match(detail, /Pedido creado desde el borrador/);
+  assert.match(detail, /<a class="text-link" href="\/drafts\/1">Desde borrador #D1<\/a>/);
+  assert.equal(await inventory(a, 1), '3');
+  assert.equal(await inventory(a, 2), '2');
+  const history = await (await a.get('/products/1/history')).text();
+  assert.match(history, /Pedido #1001/);
+
+  // The draft is completed and no longer convertible.
+  const draft = await (await a.get('/drafts/1')).text();
+  assert.match(draft, /order-pill is-fulfilled[^>]*>[\s\S]*?Completado/);
+  assert.doesNotMatch(draft, /Convertir en pedido/);
+  const again = await convert(a, 1);
+  assert.equal(again.status, 409);
+  assert.match(await again.text(), /ya está completado/);
+});
+
+test('convertir se rechaza si falta stock y no cambia nada', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  // A quote may exceed stock (10 JUNTA while only 5 are in stock).
+  assert.equal((await createDraft(a, { productId: ['1'], quantity: ['10'] })).status, 303);
+  assert.equal(await inventory(a, 1), '5');
+
+  const rejected = await convert(a, 1);
+  assert.equal(rejected.status, 400);
+  assert.match(await rejected.text(), /No hay existencias suficientes de JUNTA: disponible 5, pedido 10/);
+  assert.equal(await inventory(a, 1), '5');
+  // The draft stays open and no order was created.
+  assert.match(await (await a.get('/drafts/1')).text(), /Convertir en pedido/);
+  assert.match(await (await a.get('/orders')).text(), /Todavía no hay pedidos/);
+});
+
+test('Consulta no puede convertir; Gestión y Administración sí', async (t) => {
+  const a = await app(t);
+  await seed(a);
+  assert.equal((await createDraft(a)).status, 303);
+  assert.equal((await a.post('/users', { csrfToken: a.csrfToken, username: 'viewer', password: 'equipo-seguro-123', role: 'viewer' })).status, 303);
+
+  await a.signIn('viewer', 'equipo-seguro-123');
+  assert.doesNotMatch(await (await a.get('/drafts/1')).text(), /Convertir en pedido/);
+  assert.equal((await convert(a, 1)).status, 403);
+  assert.equal(await inventory(a, 1), '5');
+
+  await a.signIn('admin', 'marina-segura-123');
+  assert.match(await (await a.get('/drafts/1')).text(), /Convertir en pedido/);
+  assert.equal((await convert(a, 1)).status, 303);
+  assert.equal(await inventory(a, 1), '3');
 });
 
 test('Consulta ve y exporta borradores pero no crea, edita ni elimina', async (t) => {

@@ -214,6 +214,7 @@ export function annulOrder(database, userId, orderId) {
     requireManager(database, userId);
     const order = findOrderById(database, orderId);
     if (!order) throw new OrderError('No encontramos ese pedido.', 404);
+    if (order.kind !== 'order') throw new OrderError('No encontramos ese pedido.', 404);
     if (order.status === 'annulled') throw new OrderError('El pedido ya está anulado.', 409);
     if (order.status !== 'active') throw new OrderError('Solo se puede anular un pedido activo.', 409);
     for (const line of listOrderLines(database, order.id)) {
@@ -453,6 +454,44 @@ export function deleteDraft(database, userId, draftId) {
     deleteOrder(database, draft.id);
     database.exec('COMMIT');
     return draft.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Converting a draft into an order is one transaction: it re-resolves the lines against the live
+// catalog (so the price snapshot is taken now and the stock is checked), takes an order number,
+// writes the order and its lines, discounts the stock per line and marks the draft completed.
+// If any line lacks stock the whole transaction rolls back, leaving the draft untouched.
+export function convertDraftToOrder(database, userId, draftId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const draft = findOrderById(database, draftId);
+    if (!draft || draft.kind !== 'draft') throw new OrderError('No encontramos ese borrador.', 404);
+    if (draft.status === 'completed') throw new OrderError('El borrador ya está completado.', 409);
+    const rawLines = listOrderLines(database, draft.id).map((line) => ({ productId: String(line.product_id), quantity: String(line.quantity) }));
+    const lines = resolveOrderLines(database, rawLines);
+    const { totalCents } = orderTotals(lines, draft.discount_bps);
+    const number = takeOrderNumber(database, 'order');
+    const orderId = Number(insertOrder(database, {
+      kind: 'order', number, status: 'active', customerId: draft.customer_id, channelId: draft.channel_id,
+      discountBps: draft.discount_bps, notes: draft.notes, totalCents, sourceDraftNumber: draft.number,
+      sourceDraftId: draft.id,
+    }).lastInsertRowid);
+    insertOrderEvent(database, { orderId, kind: 'created', userId });
+    lines.forEach((line, position) => {
+      insertOrderLine(database, orderId, line, position);
+      recordStock(database, userId, {
+        productId: line.productId, presentation: line.presentation, operation: 'adjust',
+        quantity: -line.quantity, previousQuantity: line.available, newQuantity: line.available - line.quantity,
+        reason: `Pedido #${number}`,
+      }, 'order');
+    });
+    setOrderStatus(database, draft.id, 'completed');
+    database.exec('COMMIT');
+    return number;
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;

@@ -36,7 +36,7 @@ import {
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, draftDetailPage, draftFormPage, draftsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { addOrderComment, annulOrder, archiveOrder, createDraftFromForm, createOrderFromForm, deleteDraft, filterDrafts, filterOrders, markOrderPaid, markOrderPrepared, OrderError, orderFormValues, orderState, paginateOrders, setDraftStatus, unarchiveOrder, updateDraftFromForm } from './orders.mjs';
+import { addOrderComment, annulOrder, archiveOrder, convertDraftToOrder, createDraftFromForm, createOrderFromForm, deleteDraft, filterDrafts, filterOrders, markOrderPaid, markOrderPrepared, OrderError, orderFormValues, orderState, paginateOrders, setDraftStatus, unarchiveOrder, updateDraftFromForm } from './orders.mjs';
 import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
@@ -905,6 +905,7 @@ export function createInventoryServer({
             archive: 'Pedido archivado.',
             unarchive: 'Pedido desarchivado.',
             comment: 'Comentario publicado.',
+            converted: 'Pedido creado desde el borrador; el borrador quedó completado.',
           };
           const message = Object.entries(messages).find(([flag]) => url.searchParams.get(flag) === '1')?.[1] ?? '';
           return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), message }));
@@ -917,7 +918,8 @@ export function createInventoryServer({
       const draftEditMatch = url.pathname.match(/^\/drafts\/(\d+)\/edit$/);
       const draftStatusMatch = url.pathname.match(/^\/drafts\/(\d+)\/(complete|reopen)$/);
       const draftDeleteMatch = url.pathname.match(/^\/drafts\/(\d+)\/delete$/);
-      if (url.pathname === '/drafts' || url.pathname === '/drafts/new' || draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch) {
+      const draftConvertMatch = url.pathname.match(/^\/drafts\/(\d+)\/convert$/);
+      if (url.pathname === '/drafts' || url.pathname === '/drafts/new' || draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch || draftConvertMatch) {
         const formProducts = () => listProducts(database);
         const formCustomers = () => listCustomers(database);
         const formChannels = () => listChannels(database);
@@ -946,12 +948,9 @@ export function createInventoryServer({
             }), error.status);
           }
         }
-        const draft = draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch
-          ? findOrderByNumber(database, 'draft', Number((draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch)[1]))
-          : null;
-        if ((draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch) && !draft) {
-          return sendHtml(response, notFoundPage(session), 404);
-        }
+        const draftMatchInfo = draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch || draftConvertMatch;
+        const draft = draftMatchInfo ? findOrderByNumber(database, 'draft', Number(draftMatchInfo[1])) : null;
+        if (draftMatchInfo && !draft) return sendHtml(response, notFoundPage(session), 404);
         if (request.method === 'GET' && draftEditMatch) {
           if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
           if (draft.status !== 'open') return redirect(response, `/drafts/${draft.number}`);
@@ -992,6 +991,22 @@ export function createInventoryServer({
             return redirect(response, `/drafts/${draft.number}?${draftStatusMatch[2]}=1`);
           } catch (error) {
             if (!(error instanceof OrderError)) throw error;
+            return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), error: error.message }), error.status);
+          }
+        }
+        // Converting creates the order on the order series, discounts stock and completes the draft.
+        if (request.method === 'POST' && draftConvertMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            const number = convertDraftToOrder(database, session.userId, draft.id);
+            return redirect(response, `/orders/${number}?converted=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
             return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), error: error.message }), error.status);
           }
         }

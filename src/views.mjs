@@ -786,7 +786,11 @@ export function orderDetailPage({ order, lines = [], events = [], customer = nul
   const subtitle = [
     `Creado el ${escapeHtml(formatTimestamp(order.created_at))}`,
     escapeHtml(order.channel_name),
-    order.source_draft_number ? `Desde borrador #D${order.source_draft_number}` : '',
+    order.source_draft_number
+      ? (order.source_draft_id
+        ? `<a class="text-link" href="/drafts/${order.source_draft_number}">Desde borrador #D${order.source_draft_number}</a>`
+        : `Desde borrador #D${order.source_draft_number}`)
+      : '',
   ].filter(Boolean).join(' · ');
   // Management drives the order states by hand: mark paid, mark prepared, archive/unarchive, annul.
   // An annulled order is final, so it only keeps its read-only ficha.
@@ -1032,13 +1036,14 @@ export function draftDetailPage({ draft, lines = [], customer = null, message = 
   }).join('');
   const itemsList = lines.length ? `<ul class="order-items">${items}</ul>` : '<p class="order-card__empty">Este borrador no tiene artículos.</p>';
   const open = draft.status === 'open';
-  const actionForm = (action, label) => `<form method="post" action="/drafts/${draft.number}/${action}">
+  const actionForm = (action, label, variant = 'button-secondary') => `<form method="post" action="/drafts/${draft.number}/${action}">
     <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
-    <button class="button button-secondary" type="submit">${label}</button>
+    <button class="button ${variant}" type="submit">${label}</button>
   </form>`;
   const actions = [];
   if (canManage) {
     if (open) actions.push(`<a class="button button-secondary" href="/drafts/${draft.number}/edit">Editar</a>`);
+    if (open) actions.push(actionForm('convert', 'Convertir en pedido', 'button-primary'));
     actions.push(open ? actionForm('complete', 'Marcar como completado') : actionForm('reopen', 'Reabrir'));
     actions.push(actionForm('delete', 'Eliminar'));
   }

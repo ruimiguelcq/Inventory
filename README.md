@@ -157,6 +157,8 @@ Los pedidos y sus líneas se guardan en el mismo archivo SQLite y forman parte d
 
 Gestión y Administración **crean, editan y eliminan** borradores libremente. Su formulario es como el de un pedido (cliente, canal, líneas del catálogo con precio unitario automático, descuento y notas), pero una cotización **puede pedir más que el disponible** porque no descuenta stock. Cada borrador tiene estado **Abierto** o **Completado**: un borrador completado se **reabre** para volver a editarlo, y **eliminarlo** no reutiliza su número. Consulta puede ver y exportar, pero no crear, editar ni eliminar.
 
+**Convertir en pedido** (Gestión y Administración, desde un borrador Abierto) crea el **Pedido** con las líneas del borrador: toma el número de la serie de pedidos (**#1001+**), vuelve a fijar el **precio como instantánea** en el momento de convertir, **descuenta inventario** por la misma ruta que el alta (con movimientos de origen Pedido) y marca el borrador como **Completado**. La ficha del pedido muestra **"Desde borrador #D…"** con enlace al borrador. Si falta stock de alguna línea, la conversión **se rechaza sin cambiar nada** (ni inventario ni borrador), y un borrador no se puede convertir dos veces.
+
 El botón **Exportar** descarga `borradores.xlsx` con una fila por borrador y las columnas de la lista (**Pedido**, **Fecha**, **Cliente**, **Estado**, **Total**), respetando la búsqueda. Los borradores se guardan en el mismo archivo SQLite y forman parte de las copias de seguridad.
 
 ## Copias de seguridad
