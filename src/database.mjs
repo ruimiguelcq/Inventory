@@ -610,6 +610,24 @@ export function setOrderStatus(database, orderId, status) {
   database.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, orderId);
 }
 
+// Drafts are edited in place: the header fields are rewritten and their lines replaced wholesale.
+export function updateOrder(database, orderId, { customerId, channelId, discountBps, notes, totalCents }) {
+  return database.prepare(`
+    UPDATE orders
+    SET customer_id = ?, channel_id = ?, discount_bps = ?, notes = ?, total_cents = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(customerId, channelId, discountBps, notes, totalCents, orderId);
+}
+
+export function deleteOrderLines(database, orderId) {
+  return database.prepare('DELETE FROM order_lines WHERE order_id = ?').run(orderId);
+}
+
+// The lines cascade away with the order; drafts never touch stock, so nothing else to clean up.
+export function deleteOrder(database, orderId) {
+  return database.prepare('DELETE FROM orders WHERE id = ?').run(orderId);
+}
+
 // Payment, fulfilment and archival are marked by stamping a timestamp; a NULL means "not yet".
 export function setOrderPaidAt(database, orderId, value = 'CURRENT_TIMESTAMP') {
   database.prepare(`UPDATE orders SET paid_at = ${value}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId);

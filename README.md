@@ -151,6 +151,14 @@ Cualquier miembro del equipo con sesión iniciada puede **Exportar a Excel** la 
 
 Los pedidos y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 
+## Borradores
+
+**Borradores** (hijo de Pedidos en el lateral) son **cotizaciones de precios** que se preparan antes de que el cliente confirme. Tienen **numeración propia** desde **#D1**, no reutilizable, y **no tocan el inventario** ni el historial. La lista muestra **Pedido**, **Fecha**, **Cliente**, **Estado** y **Total**, con búsqueda instantánea por número o nombre de cliente y paginación de **50 en 50**. La cabecera ofrece **Exportar** y **Crear borrador**.
+
+Gestión y Administración **crean, editan y eliminan** borradores libremente. Su formulario es como el de un pedido (cliente, canal, líneas del catálogo con precio unitario automático, descuento y notas), pero una cotización **puede pedir más que el disponible** porque no descuenta stock. Cada borrador tiene estado **Abierto** o **Completado**: un borrador completado se **reabre** para volver a editarlo, y **eliminarlo** no reutiliza su número. Consulta puede ver y exportar, pero no crear, editar ni eliminar.
+
+El botón **Exportar** descarga `borradores.xlsx` con una fila por borrador y las columnas de la lista (**Pedido**, **Fecha**, **Cliente**, **Estado**, **Total**), respetando la búsqueda. Los borradores se guardan en el mismo archivo SQLite y forman parte de las copias de seguridad.
+
 ## Copias de seguridad
 
 La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:

@@ -50,7 +50,9 @@ const SIDEBAR_MAIN = [
     { key: 'inventory', href: '/inventory', label: 'Inventario' },
     { key: 'purchases', href: '/purchase-orders', label: 'Órdenes de compra' },
   ] },
-  { key: 'orders', href: '/orders', label: 'Pedidos', icon: 'orders', children: [] },
+  { key: 'orders', href: '/orders', label: 'Pedidos', icon: 'orders', children: [
+    { key: 'drafts', href: '/drafts', label: 'Borradores' },
+  ] },
   { key: 'customers', href: '/customers', label: 'Clientes', icon: 'customers' },
 ];
 
@@ -866,6 +868,232 @@ export function orderDetailPage({ order, lines = [], events = [], customer = nul
       </aside>
     </div>`;
   return page(`Pedido #${order.number}`, content, { ...session, active: 'orders', message });
+}
+
+const DRAFT_STATUS_LABELS = { open: 'Abierto', completed: 'Completado' };
+
+function draftStatusLabel(status) {
+  return DRAFT_STATUS_LABELS[status] ?? status;
+}
+
+// Borradores: cotizaciones con numeración propia (#D1) que no tocan el inventario. La lista es una
+// búsqueda instantánea por número o cliente con una tabla Pedido · Fecha · Cliente · Estado · Total.
+export function draftsPage({ drafts = [], filters = {}, pagination, queryParams = new URLSearchParams(), error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const hasSearch = Boolean(filters.q);
+  const exportParams = new URLSearchParams(queryParams);
+  exportParams.delete('page');
+  exportParams.set('view', 'drafts');
+  exportParams.set('scope', 'all');
+  const headerActions = `<a class="button button-secondary" href="${escapeHtml(`/exports?${exportParams.toString()}`)}">Exportar</a>
+    ${canManage ? '<a class="button button-primary" href="/drafts/new">Crear borrador</a>' : ''}`;
+
+  const rows = drafts.map((draft) => `<tr>
+      <td class="part-number"><a href="/drafts/${draft.number}">#D${draft.number}</a></td>
+      <td><time datetime="${escapeHtml(timestampAttribute(draft.created_at))}">${escapeHtml(formatTimestamp(draft.created_at))}</time></td>
+      <td class="align-left">${escapeHtml(customerName({ name: draft.customer_name, last_name: draft.customer_last_name }))}</td>
+      <td><span class="status-tag">${escapeHtml(draftStatusLabel(draft.status))}</span></td>
+      <td class="quantity-cell">${escapeHtml(formatUsd(draft.total_cents))}</td>
+    </tr>`).join('');
+
+  const pageLink = (number, label) => {
+    const params = new URLSearchParams(queryParams);
+    params.set('page', number);
+    return `<a class="button button-secondary" href="/drafts?${escapeHtml(params.toString())}">${label}</a>`;
+  };
+  const pager = pagination ? `<nav class="pagination" aria-label="Paginación">
+    <span>${pagination.total} borradores · Página ${pagination.page} de ${pagination.pages}</span>
+    <div>${pagination.page > 1 ? pageLink(pagination.page - 1, 'Anterior') : ''}
+      ${pagination.page < pagination.pages ? pageLink(pagination.page + 1, 'Siguiente') : ''}</div>
+  </nav>` : '';
+
+  const emptyState = hasSearch
+    ? `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Sin resultados</h3><p>Ningún borrador coincide con la búsqueda.</p>
+      <a class="button button-secondary" href="/drafts">Limpiar búsqueda</a></div>`
+    : `<div class="empty-state"><span class="empty-icon" aria-hidden="true">⌁</span>
+      <h3>Todavía no hay borradores</h3>
+      <p>${canManage ? 'Crea una cotización: no descuenta inventario y se edita libremente hasta confirmarla.' : 'Cuando Gestión cree una cotización, aparecerá aquí.'}</p></div>`;
+
+  const content = `
+    <div class="page-heading">
+      <div><h1>Borradores</h1>
+        <p class="page-subtitle">Cotizaciones de precios con numeración propia. Crear, editar o eliminar un borrador no cambia el inventario.</p></div>
+      <div class="form-actions">${headerActions}</div>
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <section class="inventory-panel" aria-label="Lista de borradores">
+      <form class="catalog-toolbar" method="get" action="/drafts" data-instant-search>
+        <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" placeholder="Buscar por borrador o cliente" aria-label="Buscar por borrador o cliente">
+        <button class="visually-hidden" type="submit">Buscar</button>
+      </form>
+      <div data-catalog-results>
+        ${drafts.length ? `<div class="table-scroll"><table><thead><tr>
+          <th scope="col">Pedido</th><th scope="col">Fecha (UTC)</th><th scope="col" class="align-left">Cliente</th>
+          <th scope="col">Estado</th><th scope="col" class="align-right">Total</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>` : emptyState}
+        ${pager}
+      </div>
+    </section>`;
+  return page('Borradores', content, { ...session, active: 'drafts' });
+}
+
+// Alta y edición comparten formulario: mismas secciones que un pedido, pero sin tocar el inventario.
+export function draftFormPage({ draft = null, customers = [], channels = [], products = [], values = {}, error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const editing = draft !== null;
+  const customerOptions = customers.map((customer) => ({ id: customer.id, name: customerName(customer) }));
+  const lineValues = values.lines?.length ? values.lines : [{ productId: '', quantity: '' }, { productId: '', quantity: '' }, { productId: '', quantity: '' }];
+  const rows = lineValues.map((line) => orderLineRow(line, products)).join('');
+  const selectedLines = lineValues
+    .map((line) => {
+      const product = products.find((candidate) => String(candidate.id) === String(line.productId));
+      const quantity = Number(line.quantity);
+      return product && Number.isSafeInteger(quantity) ? { quantity, unitPriceCents: product.price_cents ?? 0 } : null;
+    })
+    .filter(Boolean);
+  const discount = parseDiscount(values.discount);
+  const totals = orderTotals(selectedLines, discount.bps ?? 0);
+  const noCustomers = customers.length === 0;
+  const heading = editing ? `Editar borrador #D${draft.number}` : 'Nuevo borrador';
+  const action = editing ? `/drafts/${draft.number}` : '/drafts';
+  const content = `
+    <div class="breadcrumb"><a href="/drafts">Borradores</a><span aria-hidden="true">/</span><span>${escapeHtml(heading)}</span></div>
+    <div class="page-heading form-heading"><div><p class="eyebrow">Cotización</p><h1>${escapeHtml(heading)}</h1>
+      <p class="page-subtitle">Una cotización de precios: no descuenta inventario. Se puede editar y eliminar hasta confirmarla.</p></div></div>
+    <form class="product-form" method="post" action="${action}" data-order-form>
+      <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+      ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+      <section class="form-section form-card">
+        <h2>Cliente y canal</h2>
+        ${noCustomers ? `<p class="form-hint">Todavía no hay clientes registrados. Crea uno para poder cotizar.
+          ${canManage ? '<a href="/customers/new">Agregar cliente</a>.' : ''}</p>` : ''}
+        ${namedListCombo({ field: 'customerId', newField: '', newLabel: '', placeholder: 'Elige un cliente registrado', searchPlaceholder: 'Buscar clientes', options: customerOptions, selectedId: values.customerId, canCreate: false })}
+        ${namedListCombo({ field: 'channelId', newField: 'newChannel', newLabel: 'Crear canal', placeholder: 'Elige un canal', searchPlaceholder: 'Buscar o agregar canal', options: channels, selectedId: values.channelId, canCreate: true, newValue: values.newChannel ?? '' })}
+      </section>
+      <section class="form-section form-card">
+        <h2>Líneas del borrador</h2>
+        <p class="form-hint">Elige artículos del catálogo y fija su cantidad. El precio unitario viene del producto y no se edita. Una cotización puede pedir más que el disponible: no toca el inventario.</p>
+        <div class="table-scroll"><table class="order-lines"><thead><tr>
+          <th scope="col">Producto</th><th scope="col" class="align-right">Disponible</th>
+          <th scope="col" class="align-right">Cantidad</th><th scope="col" class="align-right">Precio unitario</th>
+          <th scope="col" class="align-right">Importe</th><th scope="col"><span class="visually-hidden">Acciones</span></th>
+        </tr></thead><tbody data-order-lines>${rows}</tbody></table></div>
+        <template data-order-line-template>${orderLineRow({ productId: '', quantity: '' }, products)}</template>
+        <div class="form-actions"><button class="button button-secondary" type="button" data-order-line-add>Añadir artículo</button></div>
+      </section>
+      <div class="product-layout">
+        <div class="product-layout__main">
+          <section class="form-section form-card">
+            <h2>Descuento y total</h2>
+            <div class="order-totals">
+              <div><span>Subtotal</span><output data-order-subtotal>${escapeHtml(formatUsd(totals.subtotalCents))}</output></div>
+              <div><label for="discount">Descuento</label>
+                <span class="order-discount"><input id="discount" name="discount" inputmode="decimal" value="${escapeHtml(values.discount ?? '')}" data-order-discount aria-label="Descuento en porcentaje"> <span aria-hidden="true">%</span></span></div>
+              <div class="order-total"><span>Total</span><output data-order-total>${escapeHtml(formatUsd(totals.totalCents))}</output></div>
+            </div>
+          </section>
+          <div class="form-actions">
+            <a class="button button-secondary" href="/drafts">Cancelar</a>
+            <button class="button button-primary" type="submit">${editing ? 'Guardar cambios' : 'Crear borrador'}</button>
+          </div>
+        </div>
+        <aside class="product-layout__side">
+          <section class="form-section form-card">
+            <h2>Notas</h2>
+            <p class="form-hint">Las notas son privadas y no se comparten con el cliente.</p>
+            <div class="field"><label class="visually-hidden" for="notes">Notas</label>
+              <textarea id="notes" name="notes" rows="5" maxlength="${MAX_ORDER_NOTES}" placeholder="Notas internas">${escapeHtml(values.notes ?? '')}</textarea></div>
+          </section>
+        </aside>
+      </div>
+    </form>`;
+  return page(heading, content, { ...session, active: 'drafts' });
+}
+
+// Ficha de la cotización: artículos, totales, notas y cliente, con Editar/Completar/Eliminar.
+export function draftDetailPage({ draft, lines = [], customer = null, message = '', error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
+  const subtotalCents = lines.reduce((sum, line) => sum + line.quantity * line.unit_price_cents, 0);
+  const items = lines.map((line) => {
+    const lineTotal = line.quantity * line.unit_price_cents;
+    const thumb = line.image_filename
+      ? `<img class="product-thumb" src="/products/${line.product_id}/image" alt="" loading="lazy" width="40" height="40">`
+      : '<span class="order-item__placeholder" aria-hidden="true"></span>';
+    return `<li class="order-item">
+      <span class="order-item__media">${thumb}</span>
+      <div class="order-item__main">
+        <p class="order-item__title">${escapeHtml(line.description)}${line.archived ? ' <span class="status-tag">Archivado</span>' : ''}</p>
+        <p class="order-item__meta">${escapeHtml(line.part_number)} · ${escapeHtml(presentationLabel(line.presentation))}</p>
+      </div>
+      <p class="order-item__price">${escapeHtml(formatUsd(line.unit_price_cents))} × ${line.quantity}</p>
+      <p class="order-item__total">${escapeHtml(formatUsd(lineTotal))}</p>
+    </li>`;
+  }).join('');
+  const itemsList = lines.length ? `<ul class="order-items">${items}</ul>` : '<p class="order-card__empty">Este borrador no tiene artículos.</p>';
+  const open = draft.status === 'open';
+  const actionForm = (action, label) => `<form method="post" action="/drafts/${draft.number}/${action}">
+    <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+    <button class="button button-secondary" type="submit">${label}</button>
+  </form>`;
+  const actions = [];
+  if (canManage) {
+    if (open) actions.push(`<a class="button button-secondary" href="/drafts/${draft.number}/edit">Editar</a>`);
+    actions.push(open ? actionForm('complete', 'Marcar como completado') : actionForm('reopen', 'Reabrir'));
+    actions.push(actionForm('delete', 'Eliminar'));
+  }
+  const actionsHtml = actions.length ? `<div class="order-detail__actions">${actions.join('')}</div>` : '';
+  const emails = customer?.emails ?? [];
+  const phones = customer?.phones ?? [];
+  const contacts = (values) => values.length
+    ? values.map((value, index) => `<p class="order-contact">${escapeHtml(value)}${index === 0 ? ' <span class="presentation-tag">Principal</span>' : ''}</p>`).join('')
+    : '<p class="order-contact muted">—</p>';
+  const address = addressLines(customer?.address);
+  const subtitle = [`Creado el ${escapeHtml(formatTimestamp(draft.created_at))}`, escapeHtml(draft.channel_name)].join(' · ');
+  const content = `
+    <div class="order-detail__head">
+      <div class="order-detail__identity">
+        <a class="order-back" href="/drafts" aria-label="Volver a la lista de borradores">←</a>
+        <div>
+          <div class="order-detail__titleline"><h1>Borrador #D${draft.number}</h1>${orderPill(draftStatusLabel(draft.status), open ? ' is-pending' : ' is-fulfilled')}</div>
+          <p class="order-detail__date">${subtitle}</p>
+        </div>
+      </div>
+      ${actionsHtml}
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <div class="order-detail">
+      <div class="order-detail__main">
+        <section class="order-card">
+          <header class="order-card__head"><h2>${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</h2></header>
+          ${itemsList}
+        </section>
+        <section class="order-card">
+          <dl class="order-totals-list">
+            <div><dt>Subtotal</dt><dd>${escapeHtml(formatUsd(subtotalCents))}</dd></div>
+            <div><dt>Descuento</dt><dd>${escapeHtml(formatPercent(draft.discount_bps))}</dd></div>
+            <div class="order-totals-list__total"><dt>Total</dt><dd>${escapeHtml(formatUsd(draft.total_cents))}</dd></div>
+          </dl>
+        </section>
+      </div>
+      <aside class="order-detail__side">
+        <section class="order-card">
+          <header class="order-card__head"><h2>Notas</h2></header>
+          <div class="order-card__body"><p class="order-notes${draft.notes ? '' : ' muted'}">${draft.notes ? escapeHtml(draft.notes) : 'Sin notas'}</p></div>
+        </section>
+        <section class="order-card">
+          <header class="order-card__head"><h2>Cliente</h2></header>
+          <div class="order-card__body">
+            <a class="text-link" href="/customers/${draft.customer_id}">${escapeHtml(customerName({ name: draft.customer_name, last_name: draft.customer_last_name }))}</a>
+            <h3 class="order-card__subhead">Información de contacto</h3>
+            ${contacts(emails)}${contacts(phones)}
+            <h3 class="order-card__subhead">Dirección de envío</h3>
+            ${address.length ? `<address class="order-address">${address.map(escapeHtml).join('<br>')}</address>` : '<p class="order-contact muted">Sin dirección</p>'}
+          </div>
+        </section>
+      </aside>
+    </div>`;
+  return page(`Borrador #D${draft.number}`, content, { ...session, active: 'drafts', message });
 }
 
 export function productDetailPage({ product, ...session }) {

@@ -1,11 +1,11 @@
 import ExcelJS from 'exceljs';
 import { filterProducts } from './products.mjs';
 import { customerName, filterCustomers } from './customers.mjs';
-import { filterOrders, orderLifecycle } from './orders.mjs';
+import { filterDrafts, filterOrders, orderLifecycle } from './orders.mjs';
 
 export class ExportError extends Error {}
 
-export const EXPORT_VIEWS = ['products', 'inventory', 'customers', 'orders'];
+export const EXPORT_VIEWS = ['products', 'inventory', 'customers', 'orders', 'drafts'];
 
 // Productos exporta el catálogo descriptivo con su categoría; Inventario solo P/N, nombre e inventario.
 export function parseExportView(params) {
@@ -30,6 +30,12 @@ export function selectExportCustomers(customers, params) {
 export function selectExportOrders(orders, params) {
   if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
   return filterOrders(orders, params);
+}
+
+// The drafts export covers every quote matching the number/customer search, across all pages.
+export function selectExportDrafts(drafts, params) {
+  if (params.get('scope') !== 'all') throw new ExportError('Elige una exportación completa.');
+  return filterDrafts(drafts, params);
 }
 
 async function writeSheet(columns, products, title) {
@@ -168,6 +174,31 @@ function orderExportRow(order) {
 
 export function exportOrders(orders) {
   return writeSheet(ORDER_COLUMNS, orders.map(orderExportRow), 'Pedidos');
+}
+
+// Borradores carries the list columns: Pedido, Fecha, Cliente, Estado and Total.
+const DRAFT_STATUS_LABELS = { open: 'Abierto', completed: 'Completado' };
+
+const DRAFT_COLUMNS = [
+  { header: 'Pedido', key: 'number', width: 14, style: { numFmt: '@' } },
+  { header: 'Fecha', key: 'created_at', width: 22 },
+  { header: 'Cliente', key: 'customer', width: 32 },
+  { header: 'Estado', key: 'status', width: 16 },
+  { header: 'Total', key: 'total', width: 14, style: { numFmt: '0.00' } },
+];
+
+function draftExportRow(draft) {
+  return {
+    number: `#D${draft.number}`,
+    created_at: draft.created_at,
+    customer: customerName({ name: draft.customer_name, last_name: draft.customer_last_name }),
+    status: DRAFT_STATUS_LABELS[draft.status] ?? draft.status,
+    total: draft.total_cents / 100,
+  };
+}
+
+export function exportDrafts(drafts) {
+  return writeSheet(DRAFT_COLUMNS, drafts.map(draftExportRow), 'Borradores');
 }
 
 // A purchase export carries only P/N, name and requested quantity, with no prices, taxes,

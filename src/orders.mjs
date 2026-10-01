@@ -1,4 +1,6 @@
 import {
+  deleteOrder,
+  deleteOrderLines,
   findChannel,
   findCustomer,
   findOrCreateNamed,
@@ -14,6 +16,7 @@ import {
   setOrderPaidAt,
   setOrderStatus,
   takeOrderNumber,
+  updateOrder,
 } from './database.mjs';
 import { customerName } from './customers.mjs';
 import { canManageInventory } from './permissions.mjs';
@@ -331,6 +334,142 @@ export function addOrderComment(database, userId, orderId, body) {
     insertOrderEvent(database, { orderId: order.id, kind: 'comment', userId, body: text });
     database.exec('COMMIT');
     return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Borradores (cotizaciones): the same model as an order, but editable, deletable
+// and detached from inventory. They are numbered #D1 onwards and are open/completed.
+// ---------------------------------------------------------------------------
+
+export const DRAFT_STATES = ['open', 'completed'];
+
+// Drafts search by number (with or without the leading # or D) and by customer name.
+export function filterDrafts(drafts, params) {
+  const query = (params.get('q') ?? '').trim().toLowerCase();
+  const raw = query.replace(/^#/, '');
+  const numberNeedle = /^d?\d+$/.test(raw) ? raw.replace(/^d/, '') : '';
+  return drafts.filter((draft) => {
+    if (!query) return true;
+    if (numberNeedle && String(draft.number).includes(numberNeedle)) return true;
+    return customerName({ name: draft.customer_name, last_name: draft.customer_last_name }).toLowerCase().includes(query);
+  });
+}
+
+// A draft line only checks that the article exists and is active: it is a price quote, so it is not
+// bounded by the available stock and never discounts inventory.
+function resolveDraftLines(database, rawLines) {
+  const filled = rawLines.filter((line) => String(line.productId).trim() !== '' || String(line.quantity).trim() !== '');
+  if (!filled.length) throw new OrderError('Añade al menos un artículo al borrador.');
+  const seen = new Set();
+  return filled.map((raw) => {
+    const productId = String(raw.productId).trim();
+    const quantityText = String(raw.quantity).trim();
+    if (!positiveId(productId)) throw new OrderError('Elige un artículo del catálogo en cada línea.');
+    const product = findProduct(database, Number(productId));
+    if (!product) throw new OrderError('Uno de los artículos del borrador ya no existe.');
+    if (product.archived) throw new OrderError(`No puedes cotizar el artículo archivado ${product.part_number}.`);
+    if (seen.has(product.id)) throw new OrderError(`El artículo ${product.part_number} aparece más de una vez en el borrador.`);
+    seen.add(product.id);
+    if (!/^[1-9]\d*$/.test(quantityText) || !Number.isSafeInteger(Number(quantityText))) {
+      throw new OrderError(`Escribe una cantidad entera mayor que cero para ${product.part_number}.`);
+    }
+    const quantity = Number(quantityText);
+    return { productId: product.id, quantity, unitPriceCents: product.price_cents ?? 0, presentation: product.presentation };
+  });
+}
+
+// Reads and validates the shared draft/order form fields, returning the resolved header and lines.
+function resolveDraftValues(database, values) {
+  if (!positiveId(values.customerId)) throw new OrderError('Elige un cliente registrado para el borrador.');
+  const customer = findCustomer(database, Number(values.customerId));
+  if (!customer) throw new OrderError('El cliente seleccionado ya no existe.');
+  const channelId = resolveChannelId(database, values);
+  const discount = parseDiscount(values.discount);
+  if (discount.error) throw new OrderError(discount.error);
+  if (values.notes.length > MAX_NOTES) throw new OrderError(`Las notas no pueden superar los ${MAX_NOTES} caracteres.`);
+  const lines = resolveDraftLines(database, values.lines);
+  const { totalCents } = orderTotals(lines, discount.bps);
+  return { customerId: customer.id, channelId, discountBps: discount.bps, notes: values.notes || null, lines, totalCents };
+}
+
+// Creating a draft is one transaction that only writes the draft, its lines and its own number.
+export function createDraftFromForm(database, userId, form) {
+  const values = orderFormValues(form);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const draft = resolveDraftValues(database, values);
+    const number = takeOrderNumber(database, 'draft');
+    const draftId = Number(insertOrder(database, {
+      kind: 'draft', number, status: 'open', customerId: draft.customerId, channelId: draft.channelId,
+      discountBps: draft.discountBps, notes: draft.notes, totalCents: draft.totalCents,
+    }).lastInsertRowid);
+    draft.lines.forEach((line, position) => insertOrderLine(database, draftId, line, position));
+    database.exec('COMMIT');
+    return number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function findWritableDraft(database, userId, draftId) {
+  requireManager(database, userId);
+  const draft = findOrderById(database, draftId);
+  if (!draft || draft.kind !== 'draft') throw new OrderError('No encontramos ese borrador.', 404);
+  if (draft.status !== 'open') throw new OrderError('El borrador está completado. Reábrelo para editarlo.', 409);
+  return draft;
+}
+
+// Editing replaces the header fields and rewrites every line; the number never changes.
+export function updateDraftFromForm(database, userId, draftId, form) {
+  const values = orderFormValues(form);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const draft = findWritableDraft(database, userId, draftId);
+    const resolved = resolveDraftValues(database, values);
+    updateOrder(database, draft.id, resolved);
+    deleteOrderLines(database, draft.id);
+    resolved.lines.forEach((line, position) => insertOrderLine(database, draft.id, line, position));
+    database.exec('COMMIT');
+    return draft.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Deleting a draft never touches inventory or the movement history.
+export function deleteDraft(database, userId, draftId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const draft = findOrderById(database, draftId);
+    if (!draft || draft.kind !== 'draft') throw new OrderError('No encontramos ese borrador.', 404);
+    deleteOrder(database, draft.id);
+    database.exec('COMMIT');
+    return draft.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Open <-> completed; the number and the lines stay untouched.
+export function setDraftStatus(database, userId, draftId, status) {
+  if (!DRAFT_STATES.includes(status)) throw new OrderError('Estado de borrador inválido.');
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const draft = findOrderById(database, draftId);
+    if (!draft || draft.kind !== 'draft') throw new OrderError('No encontramos ese borrador.', 404);
+    if (draft.status !== status) setOrderStatus(database, draft.id, status);
+    database.exec('COMMIT');
+    return draft.number;
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;

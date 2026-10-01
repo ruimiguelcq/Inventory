@@ -264,7 +264,7 @@ test('desktop sections, product details and management links respect every role 
       assert.ok(active, `${path} marca su enlace activo`);
       assert.match(active[0], new RegExp(`>${title}<`));
       const sidebar = html.match(/<aside[\s\S]*?<\/aside>/)[0];
-      assert.equal([...sidebar.matchAll(/<a /g)].length, role === 'admin' ? 7 : 5);
+      assert.equal([...sidebar.matchAll(/<a /g)].length, role === 'admin' ? 8 : 6);
       assert.equal(sidebar.includes('Cuentas y permisos'), role === 'admin');
       assert.equal(sidebar.includes('Copias de seguridad'), role === 'admin');
       assert.match(html, /Cerrar sesión/);

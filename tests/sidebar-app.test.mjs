@@ -51,6 +51,7 @@ test('el lateral conserva los destinos actuales y suma Clientes', async (t) => {
     { href: '/inventory', label: 'Inventario' },
     { href: '/purchase-orders', label: 'Órdenes de compra' },
     { href: '/orders', label: 'Pedidos' },
+    { href: '/drafts', label: 'Borradores' },
     { href: '/customers', label: 'Clientes' },
     { href: '/users', label: 'Cuentas y permisos' },
     { href: '/backups', label: 'Copias de seguridad' },
@@ -85,6 +86,7 @@ test('cada ruta deja activa su enlace, con aria-current y pastilla', async (t) =
     ['/inventory', '/inventory'],
     ['/purchase-orders', '/purchase-orders'],
     ['/orders', '/orders'],
+    ['/drafts', '/drafts'],
     ['/customers', '/customers'],
     ['/users', '/users'],
     ['/backups', '/backups'],
@@ -103,6 +105,6 @@ test('Consulta ve Clientes pero no la administración', async (t) => {
   await a.signIn('consulta', 'consulta-segura-123');
   const sidebar = sidebarOf(await (await a.get('/products')).text());
   const hrefs = linksOf(sidebar).map(hrefOf);
-  assert.deepEqual(hrefs, ['/products', '/inventory', '/purchase-orders', '/orders', '/customers']);
+  assert.deepEqual(hrefs, ['/products', '/inventory', '/purchase-orders', '/orders', '/drafts', '/customers']);
   assert.doesNotMatch(sidebar, /Configuración|Cuentas y permisos|Copias de seguridad/);
 });
