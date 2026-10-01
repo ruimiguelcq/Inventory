@@ -85,14 +85,14 @@ test('creates a numbered order, discounts inventory and records an order movemen
   const detail = await (await a.get('/orders/1001')).text();
   assert.match(detail, /<h1>Pedido #1001<\/h1>/);
   assert.match(detail, /Creado el \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/);
-  assert.match(detail, /Cliente<\/dt><dd>Ana Pérez/);
-  assert.match(detail, /Canal<\/dt><dd>Online/);
+  assert.match(detail, /<a class="text-link" href="\/customers\/1">Ana Pérez<\/a>/);
+  assert.match(detail, /· Online/);
   assert.match(detail, /JUNTA/);
   assert.match(detail, /ANODO/);
   assert.match(detail, /Descuento<\/dt><dd>10 %<\/dd>/);
   assert.match(detail, /Subtotal<\/dt><dd>\$22\.50<\/dd>/);
   assert.match(detail, /Total<\/dt><dd>\$20\.25<\/dd>/);
-  assert.match(detail, /Notas<\/dt><dd class="long-description">Urgente<\/dd>/);
+  assert.match(detail, /order-notes">Urgente<\/p>/);
 
   // Inventory is discounted and the movement carries the order origin in the product history.
   assert.match(await (await a.get('/products/1')).text(), /Inventario<\/dt><dd>3/);
@@ -192,7 +192,7 @@ test('an order may create a channel and the list is editable', async (t) => {
 
   const created = await createOrder(a, { channelId: '', newChannel: 'Instagram' });
   assert.equal(created.headers.get('location'), '/orders/1001');
-  assert.match(await (await a.get('/orders/1001')).text(), /Canal<\/dt><dd>Instagram/);
+  assert.match(await (await a.get('/orders/1001')).text(), /· Instagram/);
   assert.match(await (await a.get('/orders/new')).text(), />Instagram<\/option>/);
 
   // A second order reusing the equivalent name does not duplicate the channel.
@@ -234,7 +234,7 @@ test('an order saves the unit price snapshot so later price changes do not alter
   })).status, 303);
 
   const detail = await (await a.get('/orders/1001')).text();
-  assert.match(detail, /Precio unitario<\/th>[\s\S]*\$10\.00/);
+  assert.match(detail, /order-item__price">\$10\.00 × 2/);
   assert.match(detail, /Total<\/dt><dd>\$20\.00<\/dd>/);
 });
 
@@ -266,10 +266,14 @@ test('an existing database gains the order tables and the order movement source'
     await rm(directory, { recursive: true, force: true });
   });
   const tables = upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name);
-  for (const table of ['channels', 'orders', 'order_lines', 'order_sequences']) {
+  for (const table of ['channels', 'orders', 'order_lines', 'order_sequences', 'order_events']) {
     assert.ok(tables.includes(table), `${table} table added`);
   }
   assert.equal(upgraded.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+  const orderColumns = upgraded.prepare('PRAGMA table_info(orders)').all().map((column) => column.name);
+  for (const column of ['paid_at', 'fulfilled_at', 'archived_at']) {
+    assert.ok(orderColumns.includes(column), `${column} column added`);
+  }
   assert.equal(upgraded.prepare("SELECT name FROM channels ORDER BY id").all().map((row) => row.name).join(','), 'Online,Tienda,Correo');
   assert.equal(upgraded.prepare("SELECT next_number FROM order_sequences WHERE kind = 'order'").get().next_number, 1001);
   assert.equal(upgraded.prepare('SELECT part_number FROM products').get().part_number, 'LEGACY-1');

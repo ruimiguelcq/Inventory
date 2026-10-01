@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
+  countOrdersForCustomer,
   createAdministrator,
   findCustomer,
   findCustomerAddress,
@@ -19,6 +20,7 @@ import {
   listCustomerEmails,
   listCustomerPhones,
   listCustomers,
+  listOrderEvents,
   listOrderLines,
   listOrderLinesForOrders,
   listOrders,
@@ -34,7 +36,7 @@ import {
   updateUserRole,
 } from './database.mjs';
 import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { createOrderFromForm, filterOrders, OrderError, orderFormValues, paginateOrders } from './orders.mjs';
+import { addOrderComment, annulOrder, archiveOrder, createOrderFromForm, filterOrders, markOrderPaid, markOrderPrepared, OrderError, orderFormValues, orderState, paginateOrders, unarchiveOrder } from './orders.mjs';
 import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
@@ -375,9 +377,11 @@ export function createInventoryServer({
     // The order list searches by number or customer, filters by channel and pages at a fixed 50.
     const query = (params.get('q') ?? '').trim();
     const channel = (params.get('channel') ?? '').trim();
+    const state = orderState(params);
     const queryParams = new URLSearchParams();
     if (query) queryParams.set('q', query);
     if (channel) queryParams.set('channel', channel);
+    if (state !== 'open') queryParams.set('state', state);
     const page = params.get('page');
     if (page) queryParams.set('page', page);
     const { orders, pagination } = paginateOrders(filterOrders(listOrders(database), queryParams), queryParams);
@@ -387,9 +391,19 @@ export function createInventoryServer({
     }
     return {
       orders, pagination, linesByOrder,
-      filters: { q: query, channel },
+      filters: { q: query, channel, state },
       queryParams,
       channels: listChannels(database),
+    };
+  }
+
+  // The order ficha carries the lines, the customer with their contacts and address, and how many
+  // orders that customer has. Drafts are not counted.
+  function orderDetailView(order) {
+    const customer = customerView(database, findCustomer(database, order.customer_id));
+    return {
+      order, lines: listOrderLines(database, order.id), events: listOrderEvents(database, order.id),
+      customer, customerOrderCount: countOrdersForCustomer(database, order.customer_id),
     };
   }
 
@@ -759,7 +773,10 @@ export function createInventoryServer({
       // Orders: read-only for every role, created by Gestión and Administración. Creating discounts
       // stock and records an 'order' movement per line; the detail shows the whole ficha.
       const orderMatch = url.pathname.match(/^\/orders\/(\d+)$/);
-      if (url.pathname === '/orders' || url.pathname === '/orders/new' || orderMatch) {
+      const orderAnnulMatch = url.pathname.match(/^\/orders\/(\d+)\/annul$/);
+      const orderActionMatch = url.pathname.match(/^\/orders\/(\d+)\/(pay|prepare|archive|unarchive)$/);
+      const orderCommentMatch = url.pathname.match(/^\/orders\/(\d+)\/comments$/);
+      if (url.pathname === '/orders' || url.pathname === '/orders/new' || orderMatch || orderAnnulMatch || orderActionMatch || orderCommentMatch) {
         if (request.method === 'GET' && url.pathname === '/orders') {
           return sendHtml(response, ordersPage({ ...session, ...orderOptions(url.searchParams) }));
         }
@@ -787,10 +804,80 @@ export function createInventoryServer({
             }), error.status);
           }
         }
+        // Annulling restores the stock of every line and is refused for viewers or an already
+        // annulled order; the order stays visible with Estado Anulado.
+        if (request.method === 'POST' && orderAnnulMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderAnnulMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          try {
+            annulOrder(database, session.userId, order.id);
+            return redirect(response, `/orders/${order.number}?annulled=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({
+              ...session, ...orderDetailView(order), error: error.message,
+            }), error.status);
+          }
+        }
+        // Payment, fulfilment and archival are manual actions; the order state can be reversed only
+        // for archival, so the timeline records every step. Annulled orders refuse these actions.
+        if (request.method === 'POST' && orderActionMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderActionMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          const action = orderActionMatch[2];
+          const run = action === 'pay' ? markOrderPaid
+            : action === 'prepare' ? markOrderPrepared
+              : action === 'archive' ? archiveOrder : unarchiveOrder;
+          try {
+            run(database, session.userId, order.id);
+            return redirect(response, `/orders/${order.number}?${action}=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), error: error.message }), error.status);
+          }
+        }
+        // Internal comments land on the timeline; viewers are refused before reaching here.
+        if (request.method === 'POST' && orderCommentMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderCommentMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          try {
+            addOrderComment(database, session.userId, order.id, form.get('body'));
+            return redirect(response, `/orders/${order.number}?comment=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), error: error.message }), error.status);
+          }
+        }
         if (request.method === 'GET' && orderMatch) {
           const order = findOrderByNumber(database, 'order', Number(orderMatch[1]));
           if (!order) return sendHtml(response, notFoundPage(session), 404);
-          return sendHtml(response, orderDetailPage({ ...session, order, lines: listOrderLines(database, order.id) }));
+          const messages = {
+            annulled: 'Pedido anulado y stock repuesto.',
+            pay: 'Pedido marcado como pagado.',
+            prepare: 'Pedido marcado como preparado.',
+            archive: 'Pedido archivado.',
+            unarchive: 'Pedido desarchivado.',
+            comment: 'Comentario publicado.',
+          };
+          const message = Object.entries(messages).find(([flag]) => url.searchParams.get(flag) === '1')?.[1] ?? '';
+          return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), message }));
         }
       }
 

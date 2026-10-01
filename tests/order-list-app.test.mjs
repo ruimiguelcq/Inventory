@@ -128,7 +128,7 @@ test('la lista muestra exactamente las columnas de la lista, sin tarjetas de res
   assert.match(row, /Beto Ruiz/);
   assert.match(row, /Tienda/);
   assert.match(row, /\$12\.50/);
-  assert.match(row, /Activo/);
+  assert.match(row, /Abierto/);
 });
 
 test('la búsqueda es instantánea por número de pedido y por nombre de cliente', async (t) => {
@@ -218,7 +218,7 @@ test('Exportar genera un Excel con una fila por pedido y las columnas de la list
   assert.equal(sheet.getCell('E2').value, 0);
   assert.equal(sheet.getCell('F2').value, 10);
   assert.equal(sheet.getCell('G2').value, 1);
-  assert.equal(sheet.getCell('H2').value, 'Activo');
+  assert.equal(sheet.getCell('H2').value, 'Abierto');
   assert.equal(sheet.getCell('A4').value, '#1001');
   assert.equal(sheet.getCell('E4').value, 0.1);
   assert.equal(sheet.getCell('F4').value, 18);

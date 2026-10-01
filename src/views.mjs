@@ -1,7 +1,7 @@
 import { assignableRoles, canManageInventory } from './permissions.mjs';
 import { MAX_LONG_DESCRIPTION, PRESENTATIONS as presentationValues, formatCents, inventoryLevel, presentationLabel, stockStatus } from './products.mjs';
 import { DEFAULT_COUNTRY, MAX_ADDRESS, MAX_EMAIL, MAX_NAME, MAX_NOTES, MAX_PHONE, MAX_POSTAL_CODE, MAX_TAX_ID, VENEZUELA_STATES, customerLocation, customerName } from './customers.mjs';
-import { MAX_NOTES as MAX_ORDER_NOTES, orderTotals, parseDiscount } from './orders.mjs';
+import { MAX_NOTES as MAX_ORDER_NOTES, MAX_COMMENT as MAX_ORDER_COMMENT, orderLifecycle, orderTotals, parseDiscount } from './orders.mjs';
 
 const PRESENTATIONS = presentationValues.map((value) => [value, presentationLabel(value)]);
 
@@ -468,10 +468,81 @@ function formatPercent(bps) {
   return `${(bps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')} %`;
 }
 
-const ORDER_STATUS_LABELS = { active: 'Activo', annulled: 'Anulado', open: 'Abierto', completed: 'Completado' };
+const ORDER_LIFECYCLE_LABELS = { open: 'Abierto', archived: 'Archivado', annulled: 'Anulado' };
 
-function orderStatusLabel(status) {
-  return ORDER_STATUS_LABELS[status] ?? status;
+function orderLifecycleLabel(order) {
+  return ORDER_LIFECYCLE_LABELS[orderLifecycle(order)] ?? order.status;
+}
+
+// A single pill reads as a coloured dot plus a label, the way the Shopify order header shows state.
+function orderPill(label, tone = '') {
+  return `<span class="order-pill${tone}"><span class="order-pill__dot" aria-hidden="true"></span>${escapeHtml(label)}</span>`;
+}
+
+// The header shows the operational states side by side: payment, fulfilment and, when it applies,
+// archived or annulled. An annulled order is cancelled, so its operational pills are dropped.
+function orderHeaderPills(order) {
+  if (order.status === 'annulled') return orderPill('Anulado', ' is-annulled');
+  const pills = [
+    orderPill(order.paid_at ? 'Pagado' : 'Sin pagar', order.paid_at ? ' is-paid' : ' is-pending'),
+    orderPill(order.fulfilled_at ? 'Preparado' : 'Sin preparar', order.fulfilled_at ? ' is-fulfilled' : ' is-pending'),
+  ];
+  if (order.archived_at) pills.push(orderPill('Archivado', ' is-archived'));
+  return pills.join('');
+}
+
+const MONTH_NAMES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+// The timeline groups events by calendar day in UTC, the same clock the order timestamps use.
+function eventDayLabel(value) {
+  const day = String(value ?? '').slice(0, 10);
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+  if (day === today) return 'Hoy';
+  if (day === yesterday) return 'Ayer';
+  const [year, month, date] = day.split('-').map(Number);
+  return `${date} de ${MONTH_NAMES[month - 1]} de ${year}`;
+}
+
+function orderEventText(event, order) {
+  switch (event.kind) {
+    case 'created': return `Se creó el pedido #${order.number}.`;
+    case 'paid': return 'Se marcó el pedido como pagado.';
+    case 'fulfilled': return 'Se marcó el pedido como preparado.';
+    case 'archived': return 'Se archivó el pedido.';
+    case 'unarchived': return 'Se desarchivó el pedido.';
+    case 'annulled': return 'Se anuló el pedido y se repuso el inventario.';
+    default: return '';
+  }
+}
+
+// The timeline is a rail of events grouped per day: automatic actions read as plain sentences and
+// comments show the author above their free text.
+function orderTimeline(events, order) {
+  if (!events.length) return '<p class="order-card__empty">Todavía no hay actividad.</p>';
+  const groups = [];
+  for (const event of events) {
+    const label = eventDayLabel(event.created_at);
+    let group = groups.at(-1);
+    if (!group || group.label !== label) {
+      group = { label, items: [] };
+      groups.push(group);
+    }
+    const isComment = event.kind === 'comment';
+    group.items.push(`<li class="order-timeline__event${isComment ? ' is-comment' : ''}">
+      <div class="order-timeline__body">
+        ${isComment && event.author ? `<p class="order-timeline__author">${escapeHtml(event.author)}</p>` : ''}
+        <p class="order-timeline__text">${escapeHtml(isComment ? event.body : orderEventText(event, order)).replace(/\n/g, '<br>')}</p>
+      </div>
+      <time class="order-timeline__time" datetime="${escapeHtml(timestampAttribute(event.created_at))}">${escapeHtml(String(event.created_at).slice(11, 16))}</time>
+    </li>`);
+  }
+  return `<div class="order-timeline">${groups.map((group) => `
+    <section class="order-timeline__group">
+      <h3 class="order-timeline__day">${escapeHtml(group.label)}</h3>
+      <ol class="order-timeline__events">${group.items.join('')}</ol>
+    </section>`).join('')}</div>`;
 }
 
 // Only active articles can be part of a new order, listed with their availability.
@@ -528,11 +599,12 @@ function orderArticlesCell(order, lines) {
 }
 
 // The list keeps the same pattern as the other sections: a clean heading with only Exportar and
-// Crear pedido, instant search by number or customer, a channel filter, a fixed 50-row pager and
-// the article breakdown revealed from the Artículos cell.
+// Crear pedido, instant search by number or customer, channel and state filters, a fixed 50-row
+// pager and the article breakdown revealed from the Artículos cell.
 export function ordersPage({ orders = [], filters = {}, pagination, queryParams = new URLSearchParams(), channels = [], linesByOrder = {}, error = '', ...session }) {
   const canManage = canManageInventory(session.role);
-  const hasActiveFilter = Boolean(filters.q || filters.channel);
+  const state = filters.state ?? 'open';
+  const hasActiveFilter = Boolean(filters.q || filters.channel || state !== 'open');
   // The complete export follows the visible search and channel filter, across all pages.
   const exportParams = new URLSearchParams(queryParams);
   exportParams.delete('page');
@@ -552,7 +624,7 @@ export function ordersPage({ orders = [], filters = {}, pagination, queryParams 
       <td>${escapeHtml(formatPercent(order.discount_bps))}</td>
       <td class="quantity-cell">${escapeHtml(formatUsd(order.total_cents))}</td>
       ${orderArticlesCell(order, lines)}
-      <td><span class="status-tag">${escapeHtml(orderStatusLabel(order.status))}</span></td>
+      <td><span class="status-tag">${escapeHtml(orderLifecycleLabel(order))}</span></td>
     </tr>`;
   }).join('');
 
@@ -593,6 +665,12 @@ export function ordersPage({ orders = [], filters = {}, pagination, queryParams 
         <select name="channel" aria-label="Canal">
           <option value="">Todos los canales</option>
           ${channelOptions}
+        </select>
+        <select name="state" aria-label="Estado">
+          <option value="open" ${state === 'open' ? 'selected' : ''}>Abiertos</option>
+          <option value="archived" ${state === 'archived' ? 'selected' : ''}>Archivados</option>
+          <option value="annulled" ${state === 'annulled' ? 'selected' : ''}>Anulados</option>
+          <option value="all" ${state === 'all' ? 'selected' : ''}>Todos</option>
         </select>
         <button class="visually-hidden" type="submit">Buscar</button>
       </form>
@@ -679,46 +757,115 @@ export function orderFormPage({ customers = [], channels = [], products = [], va
   return page('Nuevo pedido', content, { ...session, active: 'orders' });
 }
 
-export function orderDetailPage({ order, lines = [], ...session }) {
+// The ficha follows the Shopify order page: a header with the status pill and the action, a main
+// column with the item and totals cards, and a sidebar with notes, customer and shipping address.
+export function orderDetailPage({ order, lines = [], events = [], customer = null, customerOrderCount = 0, message = '', error = '', ...session }) {
+  const canManage = canManageInventory(session.role);
   const subtotalCents = lines.reduce((sum, line) => sum + line.quantity * line.unit_price_cents, 0);
   const totalCents = order.total_cents;
-  const rows = lines.map((line) => {
+  const items = lines.map((line) => {
     const lineTotal = line.quantity * line.unit_price_cents;
-    return `<tr>
-      <td class="part-number">${escapeHtml(line.part_number)}</td>
-      <td class="align-left">${escapeHtml(line.description)}${line.archived ? ' <span class="status-tag">Archivado</span>' : ''}</td>
-      <td>${escapeHtml(presentationLabel(line.presentation))}</td>
-      <td class="quantity-cell">${line.quantity}</td>
-      <td class="quantity-cell">${escapeHtml(formatUsd(line.unit_price_cents))}</td>
-      <td class="quantity-cell">${escapeHtml(formatUsd(lineTotal))}</td>
-    </tr>`;
+    const thumb = line.image_filename
+      ? `<img class="product-thumb" src="/products/${line.product_id}/image" alt="" loading="lazy" width="40" height="40">`
+      : '<span class="order-item__placeholder" aria-hidden="true"></span>';
+    return `<li class="order-item">
+      <span class="order-item__media">${thumb}</span>
+      <div class="order-item__main">
+        <p class="order-item__title">${escapeHtml(line.description)}${line.archived ? ' <span class="status-tag">Archivado</span>' : ''}</p>
+        <p class="order-item__meta">${escapeHtml(line.part_number)} · ${escapeHtml(presentationLabel(line.presentation))}</p>
+      </div>
+      <p class="order-item__price">${escapeHtml(formatUsd(line.unit_price_cents))} × ${line.quantity}</p>
+      <p class="order-item__total">${escapeHtml(formatUsd(lineTotal))}</p>
+    </li>`;
   }).join('');
-  const source = order.source_draft_number ? `<dt>Origen</dt><dd>Desde borrador #D${order.source_draft_number}</dd>` : '';
+  const itemsList = lines.length
+    ? `<ul class="order-items">${items}</ul>`
+    : '<p class="order-card__empty">Este pedido no tiene artículos.</p>';
+  const subtitle = [
+    `Creado el ${escapeHtml(formatTimestamp(order.created_at))}`,
+    escapeHtml(order.channel_name),
+    order.source_draft_number ? `Desde borrador #D${order.source_draft_number}` : '',
+  ].filter(Boolean).join(' · ');
+  // Management drives the order states by hand: mark paid, mark prepared, archive/unarchive, annul.
+  // An annulled order is final, so it only keeps its read-only ficha.
+  const actionForm = (action, label) => `<form method="post" action="/orders/${order.number}/${action}">
+    <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+    <button class="button button-secondary" type="submit">${label}</button>
+  </form>`;
+  const actions = [];
+  if (canManage && order.status !== 'annulled') {
+    if (!order.paid_at) actions.push(actionForm('pay', 'Marcar como pagado'));
+    if (!order.fulfilled_at) actions.push(actionForm('prepare', 'Marcar como preparado'));
+    actions.push(order.archived_at ? actionForm('unarchive', 'Desarchivar') : actionForm('archive', 'Archivar'));
+    actions.push(actionForm('annul', 'Anular pedido'));
+  }
+  const actionsHtml = actions.length ? `<div class="order-detail__actions">${actions.join('')}</div>` : '';
+  const emails = customer?.emails ?? [];
+  const phones = customer?.phones ?? [];
+  const contacts = (values) => values.length
+    ? values.map((value, index) => `<p class="order-contact">${escapeHtml(value)}${index === 0 ? ' <span class="presentation-tag">Principal</span>' : ''}</p>`).join('')
+    : '<p class="order-contact muted">—</p>';
+  const address = addressLines(customer?.address);
   const content = `
-    <div class="breadcrumb"><a href="/orders">Pedidos</a><span aria-hidden="true">/</span><span>Pedido #${order.number}</span></div>
-    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(orderStatusLabel(order.status))}</p><h1>Pedido #${order.number}</h1>
-      <p class="page-subtitle">Creado el ${escapeHtml(formatTimestamp(order.created_at))} · ${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</p></div></div>
-    <section class="product-form form-section">
-      <dl class="product-details">
-        <dt>Cliente</dt><dd>${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</dd>
-        <dt>Canal</dt><dd>${escapeHtml(order.channel_name)}</dd>
-        <dt>Fecha</dt><dd>${escapeHtml(formatTimestamp(order.created_at))}</dd>
-        <dt>Estado</dt><dd>${escapeHtml(orderStatusLabel(order.status))}</dd>
-        ${source}
-        <dt>Descuento</dt><dd>${escapeHtml(formatPercent(order.discount_bps))}</dd>
-        <dt>Subtotal</dt><dd>${escapeHtml(formatUsd(subtotalCents))}</dd>
-        <dt>Total</dt><dd>${escapeHtml(formatUsd(totalCents))}</dd>
-        <dt>Notas</dt><dd class="long-description">${order.notes ? escapeHtml(order.notes) : '—'}</dd>
-      </dl>
-    </section>
-    <section class="inventory-panel" aria-label="Artículos del pedido">
-      <h2>Artículos</h2>
-      ${lines.length ? `<div class="table-scroll"><table><thead><tr>
-        <th scope="col">P/N</th><th scope="col" class="align-left">Producto</th><th scope="col">Presentación</th>
-        <th scope="col" class="align-right">Cantidad</th><th scope="col" class="align-right">Precio unitario</th><th scope="col" class="align-right">Importe</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty-state"><p>Este pedido no tiene artículos.</p></div>'}
-    </section>`;
-  return page(`Pedido #${order.number}`, content, { ...session, active: 'orders' });
+    <div class="order-detail__head">
+      <div class="order-detail__identity">
+        <a class="order-back" href="/orders" aria-label="Volver a la lista de pedidos">←</a>
+        <div>
+          <div class="order-detail__titleline"><h1>Pedido #${order.number}</h1>${orderHeaderPills(order)}</div>
+          <p class="order-detail__date">${subtitle}</p>
+        </div>
+      </div>
+      ${actionsHtml}
+    </div>
+    ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ''}
+    <div class="order-detail">
+      <div class="order-detail__main">
+        <section class="order-card">
+          <header class="order-card__head"><h2>${lines.length} ${lines.length === 1 ? 'artículo' : 'artículos'}</h2></header>
+          ${itemsList}
+        </section>
+        <section class="order-card">
+          <dl class="order-totals-list">
+            <div><dt>Subtotal</dt><dd>${escapeHtml(formatUsd(subtotalCents))}</dd></div>
+            <div><dt>Descuento</dt><dd>${escapeHtml(formatPercent(order.discount_bps))}</dd></div>
+            <div class="order-totals-list__total"><dt>Total</dt><dd>${escapeHtml(formatUsd(totalCents))}</dd></div>
+          </dl>
+        </section>
+        <section class="order-card order-timeline-card">
+          <header class="order-card__head"><h2>Cronología</h2></header>
+          <div class="order-card__body">
+            ${canManage ? `<form class="order-comment-form" method="post" action="/orders/${order.number}/comments">
+              <input type="hidden" name="csrfToken" value="${escapeHtml(session.csrfToken)}">
+              <label class="visually-hidden" for="order-comment">Comentario</label>
+              <textarea id="order-comment" name="body" rows="3" maxlength="${MAX_ORDER_COMMENT}" placeholder="Deja un comentario…"></textarea>
+              <div class="order-comment-form__footer">
+                <span class="muted">Solo tú y otros empleados pueden ver los comentarios.</span>
+                <button class="button button-primary" type="submit">Publicar</button>
+              </div>
+            </form>` : ''}
+            ${orderTimeline(events, order)}
+          </div>
+        </section>
+      </div>
+      <aside class="order-detail__side">
+        <section class="order-card">
+          <header class="order-card__head"><h2>Notas</h2></header>
+          <div class="order-card__body"><p class="order-notes${order.notes ? '' : ' muted'}">${order.notes ? escapeHtml(order.notes) : 'Sin notas'}</p></div>
+        </section>
+        <section class="order-card">
+          <header class="order-card__head"><h2>Cliente</h2></header>
+          <div class="order-card__body">
+            <a class="text-link" href="/customers/${order.customer_id}">${escapeHtml(customerName({ name: order.customer_name, last_name: order.customer_last_name }))}</a>
+            <p class="muted">${customerOrderCount} ${customerOrderCount === 1 ? 'pedido' : 'pedidos'}</p>
+            <h3 class="order-card__subhead">Información de contacto</h3>
+            ${contacts(emails)}${contacts(phones)}
+            <h3 class="order-card__subhead">Dirección de envío</h3>
+            ${address.length ? `<address class="order-address">${address.map(escapeHtml).join('<br>')}</address>` : '<p class="order-contact muted">Sin dirección</p>'}
+          </div>
+        </section>
+      </aside>
+    </div>`;
+  return page(`Pedido #${order.number}`, content, { ...session, active: 'orders', message });
 }
 
 export function productDetailPage({ product, ...session }) {

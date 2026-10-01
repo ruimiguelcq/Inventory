@@ -2,10 +2,17 @@ import {
   findChannel,
   findCustomer,
   findOrCreateNamed,
+  findOrderById,
   findProduct,
   findUser,
   insertOrder,
+  insertOrderEvent,
   insertOrderLine,
+  listOrderLines,
+  setOrderArchivedAt,
+  setOrderFulfilledAt,
+  setOrderPaidAt,
+  setOrderStatus,
   takeOrderNumber,
 } from './database.mjs';
 import { customerName } from './customers.mjs';
@@ -21,16 +28,32 @@ export class OrderError extends Error {
 
 export const MAX_CHANNEL = 100;
 export const MAX_NOTES = 2000;
+export const MAX_COMMENT = 2000;
 
 export const ORDERS_PER_PAGE = 50;
+// The order lifecycle replaces the old "active" label: open while it is being worked, archived
+// once it is done, annulled when it is cancelled. Payment and fulfilment are separate flags.
+export const ORDER_STATES = ['open', 'archived', 'annulled', 'all'];
+
+export function orderLifecycle(order) {
+  if (order.status === 'annulled') return 'annulled';
+  return order.archived_at ? 'archived' : 'open';
+}
+
+// Without a state the list shows only open orders; archived, annulled and all are explicit choices.
+export function orderState(params) {
+  return ORDER_STATES.includes(params.get('state')) ? params.get('state') : 'open';
+}
 
 // The list search matches the order number (with or without a leading #) and the customer name;
-// the channel filter is exact by id. Both are read from the query string and combined.
+// the channel filter is exact by id and the state filter is open/archived/annulled/all. All combine.
 export function filterOrders(orders, params) {
   const query = (params.get('q') ?? '').trim().toLowerCase();
   const channel = (params.get('channel') ?? '').trim();
+  const state = orderState(params);
   const needle = query.replace(/^#/, '');
   return orders.filter((order) => {
+    if (state !== 'all' && orderLifecycle(order) !== state) return false;
     if (channel && String(order.channel_id) !== channel) return false;
     if (!query) return true;
     return String(order.number).includes(needle)
@@ -163,6 +186,7 @@ export function createOrderFromForm(database, userId, form) {
       kind: 'order', number, status: 'active', customerId: customer.id, channelId,
       discountBps: discount.bps, notes: values.notes || null, totalCents,
     }).lastInsertRowid);
+    insertOrderEvent(database, { orderId, kind: 'created', userId });
     lines.forEach((line, position) => {
       insertOrderLine(database, orderId, line, position);
       recordStock(database, userId, {
@@ -173,6 +197,140 @@ export function createOrderFromForm(database, userId, form) {
     });
     database.exec('COMMIT');
     return number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Annulling is one transaction: it restores exactly the quantity discounted per line as a positive
+// movement with the 'order' origin, then flips the order to annulled. Re-annulling is refused.
+export function annulOrder(database, userId, orderId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const order = findOrderById(database, orderId);
+    if (!order) throw new OrderError('No encontramos ese pedido.', 404);
+    if (order.status === 'annulled') throw new OrderError('El pedido ya está anulado.', 409);
+    if (order.status !== 'active') throw new OrderError('Solo se puede anular un pedido activo.', 409);
+    for (const line of listOrderLines(database, order.id)) {
+      const product = findProduct(database, line.product_id);
+      if (!product) throw new OrderError('Uno de los artículos del pedido ya no existe.', 409);
+      recordStock(database, userId, {
+        productId: product.id, presentation: product.presentation, operation: 'adjust',
+        quantity: line.quantity, previousQuantity: product.quantity, newQuantity: product.quantity + line.quantity,
+        reason: `Anulación del pedido #${order.number}`,
+      }, 'order');
+    }
+    setOrderStatus(database, order.id, 'annulled');
+    insertOrderEvent(database, { orderId: order.id, kind: 'annulled', userId });
+    database.exec('COMMIT');
+    return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Status transitions are refused on an annulled order: cancelling is final, only a new order
+// replaces it. The caller owns the transaction; each action logs its own timeline event.
+function findWritableOrder(database, userId, orderId) {
+  requireManager(database, userId);
+  const order = findOrderById(database, orderId);
+  if (!order) throw new OrderError('No encontramos ese pedido.', 404);
+  if (order.status === 'annulled') throw new OrderError('El pedido está anulado.', 409);
+  return order;
+}
+
+// When an order is both paid and prepared it archives itself, matching the store's setting.
+function autoArchiveIfComplete(database, orderId, userId) {
+  const order = findOrderById(database, orderId);
+  if (order.paid_at && order.fulfilled_at && !order.archived_at) {
+    setOrderArchivedAt(database, orderId);
+    insertOrderEvent(database, { orderId, kind: 'archived', userId });
+  }
+}
+
+export function markOrderPaid(database, userId, orderId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const order = findWritableOrder(database, userId, orderId);
+    if (!order.paid_at) {
+      setOrderPaidAt(database, order.id);
+      insertOrderEvent(database, { orderId: order.id, kind: 'paid', userId });
+      autoArchiveIfComplete(database, order.id, userId);
+    }
+    database.exec('COMMIT');
+    return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function markOrderPrepared(database, userId, orderId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const order = findWritableOrder(database, userId, orderId);
+    if (!order.fulfilled_at) {
+      setOrderFulfilledAt(database, order.id);
+      insertOrderEvent(database, { orderId: order.id, kind: 'fulfilled', userId });
+      autoArchiveIfComplete(database, order.id, userId);
+    }
+    database.exec('COMMIT');
+    return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function archiveOrder(database, userId, orderId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const order = findWritableOrder(database, userId, orderId);
+    if (!order.archived_at) {
+      setOrderArchivedAt(database, order.id);
+      insertOrderEvent(database, { orderId: order.id, kind: 'archived', userId });
+    }
+    database.exec('COMMIT');
+    return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function unarchiveOrder(database, userId, orderId) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const order = findWritableOrder(database, userId, orderId);
+    if (order.archived_at) {
+      setOrderArchivedAt(database, order.id, 'NULL');
+      insertOrderEvent(database, { orderId: order.id, kind: 'unarchived', userId });
+    }
+    database.exec('COMMIT');
+    return order.number;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+// Comments are internal notes on the timeline; they are allowed even on an annulled order so the
+// team can record why it was cancelled.
+export function addOrderComment(database, userId, orderId, body) {
+  const text = String(body ?? '').trim();
+  if (!text) throw new OrderError('Escribe un comentario antes de publicar.');
+  if (text.length > MAX_COMMENT) throw new OrderError(`El comentario no puede superar los ${MAX_COMMENT} caracteres.`);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    requireManager(database, userId);
+    const order = findOrderById(database, orderId);
+    if (!order) throw new OrderError('No encontramos ese pedido.', 404);
+    insertOrderEvent(database, { orderId: order.id, kind: 'comment', userId, body: text });
+    database.exec('COMMIT');
+    return order.number;
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;

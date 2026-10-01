@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { filterProducts } from './products.mjs';
 import { customerName, filterCustomers } from './customers.mjs';
-import { filterOrders } from './orders.mjs';
+import { filterOrders, orderLifecycle } from './orders.mjs';
 
 export class ExportError extends Error {}
 
@@ -140,7 +140,7 @@ export function exportCustomers(customers) {
 
 // Pedidos carries one row per order with the list columns; the breakdown of articles is not
 // included, only how many each order holds.
-const ORDER_STATUS_LABELS = { active: 'Activo', annulled: 'Anulado', open: 'Abierto', completed: 'Completado' };
+const ORDER_LIFECYCLE_LABELS = { open: 'Abierto', archived: 'Archivado', annulled: 'Anulado' };
 
 const ORDER_COLUMNS = [
   { header: 'Pedido', key: 'number', width: 14, style: { numFmt: '@' } },
@@ -162,7 +162,7 @@ function orderExportRow(order) {
     discount: order.discount_bps / 10000,
     total: order.total_cents / 100,
     articles: order.line_count,
-    status: ORDER_STATUS_LABELS[order.status] ?? order.status,
+    status: ORDER_LIFECYCLE_LABELS[orderLifecycle(order)] ?? order.status,
   };
 }
 

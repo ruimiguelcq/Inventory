@@ -221,6 +221,9 @@ export function openDatabase(databasePath) {
       notes TEXT,
       total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
       source_draft_number INTEGER,
+      paid_at TEXT,
+      fulfilled_at TEXT,
+      archived_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (kind, number)
@@ -239,7 +242,24 @@ export function openDatabase(databasePath) {
     );
 
     CREATE INDEX IF NOT EXISTS order_lines_order ON order_lines(order_id, position, id);
+
+    CREATE TABLE IF NOT EXISTS order_events (
+      id INTEGER PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('created', 'paid', 'fulfilled', 'archived', 'unarchived', 'annulled', 'comment')),
+      user_id INTEGER REFERENCES users(id),
+      body TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id, id);
   `);
+  // Payment, fulfilment and archival are timestamps rather than a second status column, so the
+  // order lifecycle (open/archived/annulled) stays independent from the operational states.
+  const orderColumns = () => database.prepare('PRAGMA table_info(orders)').all().map((column) => column.name);
+  for (const [name, definition] of [['paid_at', 'TEXT'], ['fulfilled_at', 'TEXT'], ['archived_at', 'TEXT']]) {
+    if (!orderColumns().includes(name)) database.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
+  }
   const seedChannel = database.prepare('INSERT INTO channels (name) VALUES (?) ON CONFLICT(name) DO NOTHING');
   for (const name of DEFAULT_CHANNELS) seedChannel.run(name);
   // Numbers are never reused: annulling an order or deleting a draft leaves the sequence advanced.
@@ -581,6 +601,50 @@ export function findOrderByNumber(database, kind, number) {
   return database.prepare(`SELECT ${ORDER_COLUMNS} ${ORDER_FROM} WHERE orders.kind = ? AND orders.number = ?`).get(kind, number);
 }
 
+export function findOrderById(database, id) {
+  return database.prepare(`SELECT ${ORDER_COLUMNS} ${ORDER_FROM} WHERE orders.id = ?`).get(id);
+}
+
+// The caller owns the transaction; annulling flips the status without touching the lines.
+export function setOrderStatus(database, orderId, status) {
+  database.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, orderId);
+}
+
+// Payment, fulfilment and archival are marked by stamping a timestamp; a NULL means "not yet".
+export function setOrderPaidAt(database, orderId, value = 'CURRENT_TIMESTAMP') {
+  database.prepare(`UPDATE orders SET paid_at = ${value}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId);
+}
+
+export function setOrderFulfilledAt(database, orderId, value = 'CURRENT_TIMESTAMP') {
+  database.prepare(`UPDATE orders SET fulfilled_at = ${value}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId);
+}
+
+export function setOrderArchivedAt(database, orderId, value = 'CURRENT_TIMESTAMP') {
+  database.prepare(`UPDATE orders SET archived_at = ${value}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(orderId);
+}
+
+// The timeline is append-only: events carry a kind, the author and an optional comment body.
+export function insertOrderEvent(database, { orderId, kind, userId = null, body = null }) {
+  return database.prepare('INSERT INTO order_events (order_id, kind, user_id, body) VALUES (?, ?, ?, ?)')
+    .run(orderId, kind, userId, body);
+}
+
+// The ficha reads the timeline oldest first, with the author name resolved for comments.
+export function listOrderEvents(database, orderId) {
+  return database.prepare(`
+    SELECT order_events.*, users.username AS author
+    FROM order_events
+    LEFT JOIN users ON users.id = order_events.user_id
+    WHERE order_events.order_id = ?
+    ORDER BY order_events.id
+  `).all(orderId);
+}
+
+// The customer card on the order ficha counts only real orders, never drafts.
+export function countOrdersForCustomer(database, customerId) {
+  return database.prepare("SELECT COUNT(*) AS total FROM orders WHERE kind = 'order' AND customer_id = ?").get(customerId).total;
+}
+
 // The list adds the line count and returns the newest orders first.
 export function listOrders(database, kind = 'order') {
   return database.prepare(`SELECT ${ORDER_COLUMNS},
@@ -605,9 +669,9 @@ export function listOrderLinesForOrders(database, orderIds) {
 // Lines keep the price snapshot taken when the order was created and join the live product record.
 export function listOrderLines(database, orderId) {
   return database.prepare(`
-    SELECT lines.id AS line_id, lines.quantity, lines.unit_price_cents, lines.position,
+    SELECT lines.id AS line_id, lines.product_id, lines.quantity, lines.unit_price_cents, lines.position,
       products.part_number, products.description, products.presentation, products.archived,
-      categories.name AS category_name
+      products.image_filename, categories.name AS category_name
     FROM order_lines lines
     JOIN products ON products.id = lines.product_id
     LEFT JOIN categories ON categories.id = products.category_id
