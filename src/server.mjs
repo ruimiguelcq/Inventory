@@ -5,18 +5,25 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
+  countOrdersForCustomer,
   createAdministrator,
   findCustomer,
   findCustomerAddress,
   findUser,
   findProduct,
+  findOrderByNumber,
   findPurchaseOrder,
   findUserByUsername,
   hasAdministrator,
   insertUser,
+  listChannels,
   listCustomerEmails,
   listCustomerPhones,
   listCustomers,
+  listOrderEvents,
+  listOrderLines,
+  listOrderLinesForOrders,
+  listOrders,
   listProducts,
   listCategories,
   listProductTypes,
@@ -28,13 +35,14 @@ import {
   setProductArchived,
   updateUserRole,
 } from './database.mjs';
-import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
-import { addressFromForm, CustomerError, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
+import { accountsPage, customerDetailPage, customerFormPage, customerImportPage, customersPage, draftDetailPage, draftFormPage, draftsPage, forbiddenPage, inventoryPage, productsPage, productDetailPage, orderDetailPage, orderFormPage, ordersPage, purchaseOrderPage, purchaseOrdersPage, loginPage, notFoundPage, productFormPage, setupPage, importPage } from './views.mjs';
+import { addOrderComment, annulOrder, archiveOrder, convertDraftToOrder, createDraftFromForm, createOrderFromForm, deleteDraft, filterDrafts, filterOrders, markOrderPaid, markOrderPrepared, OrderError, orderFormValues, orderState, paginateOrders, setDraftStatus, unarchiveOrder, updateDraftFromForm } from './orders.mjs';
+import { addressFromForm, createCustomerInline, CustomerError, customerName as customerDisplayName, EMAIL_FIELDS, filterCustomers, paginateCustomers, PHONE_FIELDS, saveCustomer, validateAddress, validateCustomer } from './customers.mjs';
 import { catalogState, filterProducts, formatCents, paginateProducts, validateProduct } from './products.mjs';
 import { CatalogError, saveCatalogProduct } from './catalog.mjs';
 import { addPurchaseLine, archivePurchaseOrder, createPurchaseDraft, PurchaseError, removePurchaseLine, reopenPurchaseOrder, savePurchaseDraft, selectableProducts } from './purchases.mjs';
 import { readImportForm, previewImport, previewCustomerImport, applyImport, applyCustomerImport, ImportError, parseImportView } from './imports.mjs';
-import { exportCustomers, exportPurchaseOrder, exportView, parseExportView, selectExportCustomers, selectExportProducts, ExportError } from './exports.mjs';
+import { exportCustomers, exportDrafts, exportOrders, exportPurchaseOrder, exportView, parseExportView, selectExportCustomers, selectExportDrafts, selectExportOrders, selectExportProducts, ExportError } from './exports.mjs';
 import { canManageInventory, isAssignableRole } from './permissions.mjs';
 import { reviewStock, saveStock, stockHistory, StockError } from './stock.mjs';
 import { stockPage, historyPage, backupsPage, restoreBackupPage } from './views.mjs';
@@ -121,6 +129,16 @@ function sendHtml(response, html, status = 200, headers = {}) {
 function redirect(response, location, headers = {}) {
   response.writeHead(303, { location, 'cache-control': 'no-store', ...headers });
   response.end();
+}
+
+// The inline customer dialog posts with fetch and expects JSON back, not an HTML page.
+function sendJson(response, data, status = 200) {
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  response.end(JSON.stringify(data));
 }
 
 function productFrom(form, previous = {}) {
@@ -365,6 +383,57 @@ export function createInventoryServer({
     };
   }
 
+  function orderOptions(params) {
+    // The order list searches by number or customer, filters by channel and pages at a fixed 50.
+    const query = (params.get('q') ?? '').trim();
+    const channel = (params.get('channel') ?? '').trim();
+    const state = orderState(params);
+    const queryParams = new URLSearchParams();
+    if (query) queryParams.set('q', query);
+    if (channel) queryParams.set('channel', channel);
+    if (state !== 'open') queryParams.set('state', state);
+    const page = params.get('page');
+    if (page) queryParams.set('page', page);
+    const { orders, pagination } = paginateOrders(filterOrders(listOrders(database), queryParams), queryParams);
+    const linesByOrder = {};
+    for (const line of listOrderLinesForOrders(database, orders.map((order) => order.id))) {
+      (linesByOrder[line.order_id] ??= []).push(line);
+    }
+    return {
+      orders, pagination, linesByOrder,
+      filters: { q: query, channel, state },
+      queryParams,
+      channels: listChannels(database),
+    };
+  }
+
+  // The order ficha carries the lines, the customer with their contacts and address, and how many
+  // orders that customer has. Drafts are not counted.
+  function orderDetailView(order) {
+    const customer = customerView(database, findCustomer(database, order.customer_id));
+    return {
+      order, lines: listOrderLines(database, order.id), events: listOrderEvents(database, order.id),
+      customer, customerOrderCount: countOrdersForCustomer(database, order.customer_id),
+    };
+  }
+
+  function draftOptions(params) {
+    // The draft list searches by number or customer and pages at a fixed 50, like orders.
+    const query = (params.get('q') ?? '').trim();
+    const queryParams = new URLSearchParams();
+    if (query) queryParams.set('q', query);
+    const page = params.get('page');
+    if (page) queryParams.set('page', page);
+    const { orders: drafts, pagination } = paginateOrders(filterDrafts(listOrders(database, 'draft'), queryParams), queryParams);
+    return { drafts, pagination, filters: { q: query }, queryParams };
+  }
+
+  // The draft ficha carries the lines and the customer with their contacts, like an order.
+  function draftDetailView(draft) {
+    const customer = customerView(database, findCustomer(database, draft.customer_id));
+    return { draft, lines: listOrderLines(database, draft.id), customer };
+  }
+
   function runAutomaticBackup() {
     try {
       createBackup(database, backupDirectory, { retention: backupRetention, imageDirectory });
@@ -492,6 +561,26 @@ export function createInventoryServer({
             });
             return response.end(buffer);
           }
+          if (view === 'orders') {
+            const buffer = await exportOrders(selectExportOrders(listOrders(database), params));
+            response.writeHead(200, {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': 'attachment; filename="pedidos.xlsx"',
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            });
+            return response.end(buffer);
+          }
+          if (view === 'drafts') {
+            const buffer = await exportDrafts(selectExportDrafts(listOrders(database, 'draft'), params));
+            response.writeHead(200, {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': 'attachment; filename="borradores.xlsx"',
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            });
+            return response.end(buffer);
+          }
           const viewParams = new URLSearchParams(params);
           // Inventory only ever exports active articles; products honors its state filter.
           if (view === 'inventory') viewParams.set('state', 'active');
@@ -509,6 +598,12 @@ export function createInventoryServer({
           if (view === 'customers') {
             return sendHtml(response, customersPage({ ...session, ...customerOptions(params), message: error.message }), 400);
           }
+          if (view === 'orders') {
+            return sendHtml(response, ordersPage({ ...session, ...orderOptions(params), error: error.message }), 400);
+          }
+          if (view === 'drafts') {
+            return sendHtml(response, draftsPage({ ...session, ...draftOptions(params), error: error.message }), 400);
+          }
           const render = view === 'products' ? productsPage : inventoryPage;
           const fallback = new URLSearchParams(params);
           return sendHtml(response, render({ ...session, ...catalogOptions(fallback, view === 'inventory'), message: error.message }), 400);
@@ -516,7 +611,7 @@ export function createInventoryServer({
       }
 
       // Every private mutation requires gestión, including future stock/archive routes.
-      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname) || url.pathname === '/customers/new' || /^\/customers\/\d+\/edit$/.test(url.pathname))) {
+      if (!canManageInventory(session.role) && (request.method !== 'GET' || url.pathname === '/products/new' || /^\/products\/\d+\/edit$/.test(url.pathname) || url.pathname === '/customers/new' || /^\/customers\/\d+\/edit$/.test(url.pathname) || url.pathname === '/orders/new')) {
         return sendHtml(response, forbiddenPage(session), 403);
       }
 
@@ -712,6 +807,253 @@ export function createInventoryServer({
             if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
             return renderPurchase({ values: Object.fromEntries(form), error: error.message });
           }
+        }
+      }
+
+      // Orders: read-only for every role, created by Gestión and Administración. Creating discounts
+      // stock and records an 'order' movement per line; the detail shows the whole ficha.
+      const orderMatch = url.pathname.match(/^\/orders\/(\d+)$/);
+      const orderAnnulMatch = url.pathname.match(/^\/orders\/(\d+)\/annul$/);
+      const orderActionMatch = url.pathname.match(/^\/orders\/(\d+)\/(pay|prepare|archive|unarchive)$/);
+      const orderCommentMatch = url.pathname.match(/^\/orders\/(\d+)\/comments$/);
+      if (url.pathname === '/orders' || url.pathname === '/orders/new' || orderMatch || orderAnnulMatch || orderActionMatch || orderCommentMatch) {
+        if (request.method === 'GET' && url.pathname === '/orders') {
+          return sendHtml(response, ordersPage({ ...session, ...orderOptions(url.searchParams) }));
+        }
+        if (request.method === 'GET' && url.pathname === '/orders/new') {
+          if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+          return sendHtml(response, orderFormPage({
+            ...session, customers: listCustomers(database), channels: listChannels(database), products: listProducts(database),
+          }));
+        }
+        if (request.method === 'POST' && url.pathname === '/orders') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          // A role may change while the request body is arriving. Check again at the write boundary.
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            const number = createOrderFromForm(database, session.userId, form);
+            return redirect(response, `/orders/${number}`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            return sendHtml(response, orderFormPage({
+              ...session, customers: listCustomers(database), channels: listChannels(database), products: listProducts(database),
+              values: orderFormValues(form), error: error.message,
+            }), error.status);
+          }
+        }
+        // Annulling restores the stock of every line and is refused for viewers or an already
+        // annulled order; the order stays visible with Estado Anulado.
+        if (request.method === 'POST' && orderAnnulMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderAnnulMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          try {
+            annulOrder(database, session.userId, order.id);
+            return redirect(response, `/orders/${order.number}?annulled=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({
+              ...session, ...orderDetailView(order), error: error.message,
+            }), error.status);
+          }
+        }
+        // Payment, fulfilment and archival are manual actions; the order state can be reversed only
+        // for archival, so the timeline records every step. Annulled orders refuse these actions.
+        if (request.method === 'POST' && orderActionMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderActionMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          const action = orderActionMatch[2];
+          const run = action === 'pay' ? markOrderPaid
+            : action === 'prepare' ? markOrderPrepared
+              : action === 'archive' ? archiveOrder : unarchiveOrder;
+          try {
+            run(database, session.userId, order.id);
+            return redirect(response, `/orders/${order.number}?${action}=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), error: error.message }), error.status);
+          }
+        }
+        // Internal comments land on the timeline; viewers are refused before reaching here.
+        if (request.method === 'POST' && orderCommentMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          const order = findOrderByNumber(database, 'order', Number(orderCommentMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          try {
+            addOrderComment(database, session.userId, order.id, form.get('body'));
+            return redirect(response, `/orders/${order.number}?comment=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), error: error.message }), error.status);
+          }
+        }
+        if (request.method === 'GET' && orderMatch) {
+          const order = findOrderByNumber(database, 'order', Number(orderMatch[1]));
+          if (!order) return sendHtml(response, notFoundPage(session), 404);
+          const messages = {
+            annulled: 'Pedido anulado y stock repuesto.',
+            pay: 'Pedido marcado como pagado.',
+            prepare: 'Pedido marcado como preparado.',
+            archive: 'Pedido archivado.',
+            unarchive: 'Pedido desarchivado.',
+            comment: 'Comentario publicado.',
+            converted: 'Pedido creado desde el borrador; el borrador quedó completado.',
+          };
+          const message = Object.entries(messages).find(([flag]) => url.searchParams.get(flag) === '1')?.[1] ?? '';
+          return sendHtml(response, orderDetailPage({ ...session, ...orderDetailView(order), message }));
+        }
+      }
+
+      // Borradores (cotizaciones): read-only for every role, created/edited/deleted by Gestión and
+      // Administración. They never touch inventory or the movement history.
+      const draftMatch = url.pathname.match(/^\/drafts\/(\d+)$/);
+      const draftEditMatch = url.pathname.match(/^\/drafts\/(\d+)\/edit$/);
+      const draftStatusMatch = url.pathname.match(/^\/drafts\/(\d+)\/(complete|reopen)$/);
+      const draftDeleteMatch = url.pathname.match(/^\/drafts\/(\d+)\/delete$/);
+      const draftConvertMatch = url.pathname.match(/^\/drafts\/(\d+)\/convert$/);
+      if (url.pathname === '/drafts' || url.pathname === '/drafts/new' || draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch || draftConvertMatch) {
+        const formProducts = () => listProducts(database);
+        const formCustomers = () => listCustomers(database);
+        const formChannels = () => listChannels(database);
+        if (request.method === 'GET' && url.pathname === '/drafts') {
+          const message = url.searchParams.get('deleted') === '1' ? 'Borrador eliminado.' : '';
+          return sendHtml(response, draftsPage({ ...session, ...draftOptions(url.searchParams), message }));
+        }
+        if (request.method === 'GET' && url.pathname === '/drafts/new') {
+          if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+          return sendHtml(response, draftFormPage({ ...session, customers: formCustomers(), channels: formChannels(), products: formProducts() }));
+        }
+        if (request.method === 'POST' && url.pathname === '/drafts') {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            const number = createDraftFromForm(database, session.userId, form);
+            return redirect(response, `/drafts/${number}`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            return sendHtml(response, draftFormPage({
+              ...session, customers: formCustomers(), channels: formChannels(), products: formProducts(),
+              values: orderFormValues(form), error: error.message,
+            }), error.status);
+          }
+        }
+        const draftMatchInfo = draftMatch || draftEditMatch || draftStatusMatch || draftDeleteMatch || draftConvertMatch;
+        const draft = draftMatchInfo ? findOrderByNumber(database, 'draft', Number(draftMatchInfo[1])) : null;
+        if (draftMatchInfo && !draft) return sendHtml(response, notFoundPage(session), 404);
+        if (request.method === 'GET' && draftEditMatch) {
+          if (!canManageInventory(session.role)) return sendHtml(response, forbiddenPage(session), 403);
+          if (draft.status !== 'open') return redirect(response, `/drafts/${draft.number}`);
+          const lines = listOrderLines(database, draft.id).map((line) => ({ productId: String(line.product_id), quantity: String(line.quantity) }));
+          return sendHtml(response, draftFormPage({
+            ...session, draft, customers: formCustomers(), channels: formChannels(), products: formProducts(),
+            values: {
+              customerId: String(draft.customer_id), channelId: String(draft.channel_id),
+              discount: String(draft.discount_bps / 100), notes: draft.notes ?? '', lines,
+            },
+          }));
+        }
+        if (request.method === 'POST' && draftMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            updateDraftFromForm(database, session.userId, draft.id, form);
+            return redirect(response, `/drafts/${draft.number}?saved=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            if (error.status === 409) return redirect(response, `/drafts/${draft.number}`);
+            return sendHtml(response, draftFormPage({
+              ...session, draft, customers: formCustomers(), channels: formChannels(), products: formProducts(),
+              values: orderFormValues(form), error: error.message,
+            }), error.status);
+          }
+        }
+        if (request.method === 'POST' && draftStatusMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            setDraftStatus(database, session.userId, draft.id, draftStatusMatch[2] === 'complete' ? 'completed' : 'open');
+            return redirect(response, `/drafts/${draft.number}?${draftStatusMatch[2]}=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), error: error.message }), error.status);
+          }
+        }
+        // Converting creates the order on the order series, discounts stock and completes the draft.
+        if (request.method === 'POST' && draftConvertMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            const number = convertDraftToOrder(database, session.userId, draft.id);
+            return redirect(response, `/orders/${number}?converted=1`);
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            if (error.status === 403) return sendHtml(response, forbiddenPage(session), 403);
+            if (error.status === 404) return sendHtml(response, notFoundPage(session), 404);
+            return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), error: error.message }), error.status);
+          }
+        }
+        if (request.method === 'POST' && draftDeleteMatch) {
+          const form = await readForm(request);
+          if (!validateCsrf(form, session)) return sendHtml(response, forbiddenPage(session), 403);
+          const user = findUser(database, session.userId);
+          if (!canManageInventory(user?.role)) return sendHtml(response, forbiddenPage({ ...session, role: user?.role }), 403);
+          try {
+            deleteDraft(database, session.userId, draft.id);
+            return redirect(response, '/drafts?deleted=1');
+          } catch (error) {
+            if (!(error instanceof OrderError)) throw error;
+            return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), error: error.message }), error.status);
+          }
+        }
+        if (request.method === 'GET' && draftMatch) {
+          const messages = { saved: 'Borrador guardado.', complete: 'Borrador completado.', reopen: 'Borrador reabierto.' };
+          const message = Object.entries(messages).find(([flag]) => url.searchParams.get(flag) === '1')?.[1] ?? '';
+          return sendHtml(response, draftDetailPage({ ...session, ...draftDetailView(draft), message }));
+        }
+      }
+
+      // "Cliente al vuelo": the order and draft forms add a customer without leaving the page. It is
+      // a fetch-only endpoint that answers JSON so the dialog can select the new customer in place.
+      if (request.method === 'POST' && url.pathname === '/customers/inline') {
+        const form = await readForm(request);
+        if (!validateCsrf(form, session)) return sendJson(response, { error: 'La sesión caducó. Vuelve a intentarlo.' }, 403);
+        const user = findUser(database, session.userId);
+        if (!canManageInventory(user?.role)) return sendJson(response, { error: 'No tienes permiso para crear clientes.' }, 403);
+        try {
+          const id = createCustomerInline(database, session.userId, form);
+          const row = findCustomer(database, id);
+          return sendJson(response, { id, name: customerDisplayName(row) }, 201);
+        } catch (error) {
+          if (error instanceof CustomerError) return sendJson(response, { error: error.message }, error.status);
+          throw error;
         }
       }
 

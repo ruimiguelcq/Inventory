@@ -135,6 +135,32 @@ Cada cliente tiene **una** dirección de entrega opcional que se abre en un moda
 
 Consulta ve la lista y la ficha y puede **exportar**; Gestión y Administración crean, editan, importan y exportan clientes, con autorización y validación en el servidor. Los clientes se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
 
+## Pedidos
+
+**Pedidos** registra las compras de los clientes por canal. La lista muestra exactamente **Pedido**, **Fecha**, **Cliente**, **Canal**, **Descuento**, **Total**, **Artículos** y **Estado**. La búsqueda es instantánea **por número de pedido y por nombre de cliente**, con filtros por **Canal** y por **Estado (Abiertos / Archivados / Anulados / Todos)**; pagina de **50 en 50** con Anterior y Siguiente, sin selector de tamaño. La columna **Estado** muestra el ciclo de vida del pedido: **Abierto** mientras se trabaja, **Archivado** cuando está terminado y **Anulado** cuando se canceló. Al pulsar **Artículos** se despliega el desglose (producto, P/N, presentación y cantidad) sin salir de la lista. La cabecera es limpia, solo con **Exportar** y **Crear pedido** (este último solo para Gestión y Administración).
+
+Gestión y Administración crean un **Nuevo pedido** eligiendo un **cliente registrado** (con buscador) o **creándolo al vuelo** sin salir del pedido: el botón **Nuevo cliente** abre un modal con la ficha del cliente (nombre, apellido, correo, teléfono, RIF/Cédula, dirección y notas); al guardarlo queda en **Clientes** con su **RIF único** (un RIF repetido se rechaza con un mensaje claro) y el pedido continúa con ese cliente seleccionado. Luego se elige el **canal** de una lista editable (sembrada con Online, Tienda y Correo) y líneas del catálogo con su disponibilidad. El **precio unitario** viene del producto y no se edita; se fija la **cantidad**, se aplica un **descuento en %** y se guardan **Notas** privadas. El **Total** es el subtotal menos el descuento, en USD con dos decimales. Al crear el pedido el inventario se **descuenta** y cada línea deja un movimiento con origen Pedido en el historial del producto; no se permite pedir más que el disponible. La ficha muestra el número (desde **#1001**), la fecha automática, el cliente, el canal, las líneas, el descuento, el total y las notas. Consulta puede ver y exportar, pero no crear.
+
+La ficha muestra el estado del pedido con etiquetas independientes: **pago** (Sin pagar / Pagado), **preparación** (Sin preparar / Preparado) y, cuando aplica, **Archivado**. Gestión y Administración cambian esos estados con botones: **Marcar como pagado**, **Marcar como preparado**, **Archivar/Desarchivar** y **Anular pedido**. Un pedido que queda pagado y preparado se **archiva automáticamente**. Cada acción queda registrada en la **Cronología**.
+
+Cada pedido tiene una **Cronología** en su ficha: registra automáticamente el alta, el pago, la preparación, el archivado, el desarchivado y la anulación, y permite **añadir comentarios internos**. Los comentarios solo los ven tú y otros empleados; Gestión y Administración pueden publicarlos y Consulta solo lee. La cronología agrupa los eventos por día (Hoy, Ayer y la fecha) con la hora de cada uno.
+
+Gestión y Administración pueden **Anular** un pedido activo desde su ficha: se **repone exactamente** la cantidad descontada de cada línea con un movimiento de origen Pedido en el historial, en una sola transacción, y el pedido queda visible con **Estado Anulado**. Un pedido anulado no se puede volver a anular, cambiar de estado ni editar, y el inventario nunca queda negativo por una anulación. Consulta no puede anular.
+
+Cualquier miembro del equipo con sesión iniciada puede **Exportar a Excel** la lista. El archivo `pedidos.xlsx` contiene una fila por pedido con las columnas de la lista (**Pedido**, **Fecha**, **Cliente**, **Canal**, **Descuento**, **Total**, **Artículos**, **Estado**) y sin el desglose. La exportación completa respeta la búsqueda y el canal y recorre **todas las páginas**.
+
+Los pedidos y sus líneas se guardan en el mismo archivo SQLite y forman parte del estado incluido en las copias de seguridad y la restauración.
+
+## Borradores
+
+**Borradores** (hijo de Pedidos en el lateral) son **cotizaciones de precios** que se preparan antes de que el cliente confirme. Tienen **numeración propia** desde **#D1**, no reutilizable, y **no tocan el inventario** ni el historial. La lista muestra **Pedido**, **Fecha**, **Cliente**, **Estado** y **Total**, con búsqueda instantánea por número o nombre de cliente y paginación de **50 en 50**. La cabecera ofrece **Exportar** y **Crear borrador**.
+
+Gestión y Administración **crean, editan y eliminan** borradores libremente. Su formulario es como el de un pedido (cliente —con buscador y **alta al vuelo**—, canal, líneas del catálogo con precio unitario automático, descuento y notas), pero una cotización **puede pedir más que el disponible** porque no descuenta stock. Cada borrador tiene estado **Abierto** o **Completado**: un borrador completado se **reabre** para volver a editarlo, y **eliminarlo** no reutiliza su número. Consulta puede ver y exportar, pero no crear, editar ni eliminar.
+
+**Convertir en pedido** (Gestión y Administración, desde un borrador Abierto) crea el **Pedido** con las líneas del borrador: toma el número de la serie de pedidos (**#1001+**), vuelve a fijar el **precio como instantánea** en el momento de convertir, **descuenta inventario** por la misma ruta que el alta (con movimientos de origen Pedido) y marca el borrador como **Completado**. La ficha del pedido muestra **"Desde borrador #D…"** con enlace al borrador. Si falta stock de alguna línea, la conversión **se rechaza sin cambiar nada** (ni inventario ni borrador), y un borrador no se puede convertir dos veces.
+
+El botón **Exportar** descarga `borradores.xlsx` con una fila por borrador y las columnas de la lista (**Pedido**, **Fecha**, **Cliente**, **Estado**, **Total**), respetando la búsqueda. Los borradores se guardan en el mismo archivo SQLite y forman parte de las copias de seguridad.
+
 ## Copias de seguridad
 
 La aplicación crea copias de seguridad automáticas de la base de datos sin intervención manual:

@@ -147,6 +147,23 @@ export function writeCustomer(database, userId, customer, address = null, existi
   return id;
 }
 
+// "Cliente al vuelo": read the inline customer form from an order or a draft, validate it and save
+// it, returning the new customer id. A duplicate RIF/Cédula is surfaced as a clear message.
+export function createCustomerInline(database, userId, form) {
+  const { error, customer } = validateCustomer(form);
+  if (error) throw new CustomerError(error);
+  const { error: addressError, address } = validateAddress(form);
+  if (addressError) throw new CustomerError(addressError);
+  try {
+    return saveCustomer(database, userId, customer, address, null);
+  } catch (thrown) {
+    if (thrown instanceof CustomerError) throw thrown;
+    const unique = thrown.code === 'ERR_SQLITE_ERROR' && thrown.message.includes('UNIQUE constraint failed: customers.tax_id');
+    if (unique) throw new CustomerError('Ya existe un cliente con ese RIF / Cédula.', 409);
+    throw thrown;
+  }
+}
+
 // The customer, its contacts and its address commit together; a duplicate RIF/Cédula aborts the lot.
 export function saveCustomer(database, userId, customer, address = null, existing = null) {
   database.exec('BEGIN IMMEDIATE');
